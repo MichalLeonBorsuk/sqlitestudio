@@ -50,6 +50,9 @@ class GUI_API_EXPORT ConfigDialog : public QDialog
         static QString getFilterString(QListWidget* widget);
         static QString getFilterString(QTableWidget* widget);
 
+    protected:
+        void showEvent(QShowEvent* event);
+
     private:
         void init();
         void load();
@@ -102,7 +105,6 @@ class GUI_API_EXPORT ConfigDialog : public QDialog
         void colorChanged();
         QList<QWidget*> prepareCodeSyntaxColorsForStyle();
         void adjustSyntaxColorsForStyle(QList<QWidget*>& unmodifiedColors);
-        void initPreviewEditorsForSyntaxHighlighters();
         void highlighterPluginLoaded(SyntaxHighlighterPlugin* plugin);
         void highlighterPluginUnloaded(SyntaxHighlighterPlugin* plugin);
 

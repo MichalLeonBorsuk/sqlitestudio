@@ -38,7 +38,7 @@ void PluginManagerImpl::init()
 #endif
 
 #ifdef Q_OS_MACX
-    pluginDirs += QCoreApplication::applicationDirPath()+"/../PlugIns";
+    pluginDirs += QDir(QCoreApplication::applicationDirPath()+"/../PlugIns").absolutePath();
 #endif
 
     scanPlugins();
@@ -50,7 +50,7 @@ void PluginManagerImpl::deinit()
     emit aboutToQuit();
 
     // Plugin containers and their plugins
-    for (PluginContainer* container : pluginContainer.values())
+    for (PluginContainer*& container : pluginContainer.values())
     {
         if (container->builtIn)
         {
@@ -61,13 +61,13 @@ void PluginManagerImpl::deinit()
             unload(container->name);
     }
 
-    for (PluginContainer* container : pluginContainer.values())
+    for (PluginContainer*& container : pluginContainer.values())
         delete container;
 
     pluginContainer.clear();
 
     // Types
-    for (PluginType* type : registeredPluginTypes)
+    for (PluginType*& type : registeredPluginTypes)
         delete type;
 
     registeredPluginTypes.clear();
@@ -109,14 +109,11 @@ PluginType* PluginManagerImpl::getPluginType(Plugin* plugin) const
 
 void PluginManagerImpl::scanPlugins()
 {
-    QStringList nameFilters;
-    nameFilters << "*.so" << "*.dll" << "*.dylib";
-
     QPluginLoader* loader = nullptr;
-    for (QString pluginDirPath : pluginDirs)
+    for (QString& pluginDirPath : pluginDirs)
     {
         QDir pluginDir(pluginDirPath);
-        for (QString fileName : pluginDir.entryList(nameFilters, QDir::Files))
+        for (QString& fileName : pluginDir.entryList(sharedLibFileFilters(), QDir::Files))
         {
             fileName = pluginDir.absoluteFilePath(fileName);
             loader = new QPluginLoader(fileName);
@@ -131,7 +128,7 @@ void PluginManagerImpl::scanPlugins()
     }
 
     QStringList names;
-    for (PluginContainer* container : pluginContainer.values())
+    for (PluginContainer*& container : pluginContainer.values())
     {
         if (!container->builtIn)
             names << container->name;
@@ -143,7 +140,7 @@ void PluginManagerImpl::scanPlugins()
 void PluginManagerImpl::loadPlugins()
 {
     QStringList alreadyAttempted;
-    for (const QString& pluginName : pluginContainer.keys())
+    for (QString& pluginName : pluginContainer.keys())
     {
         if (shouldAutoLoad(pluginName))
             load(pluginName, alreadyAttempted);
@@ -158,7 +155,7 @@ bool PluginManagerImpl::initPlugin(QPluginLoader* loader, const QString& fileNam
     QJsonObject pluginMetaData = loader->metaData();
     QString pluginTypeName = pluginMetaData.value("MetaData").toObject().value("type").toString();
     PluginType* pluginType = nullptr;
-    for (PluginType* type : registeredPluginTypes)
+    for (PluginType*& type : registeredPluginTypes)
     {
         if (type->getName() == pluginTypeName)
         {
@@ -472,9 +469,9 @@ void PluginManagerImpl::unload(const QString& pluginName)
     removePluginFromCollections(container->plugin);
 
     // Deinitializing and unloading plugin
+    unloadTranslation(container->name);
     emit aboutToUnload(container->plugin, container->type);
     container->plugin->deinit();
-    unloadTranslation(container->name);
 
     QPluginLoader* loader = container->loader;
     if (!loader->isLoaded())
@@ -491,7 +488,7 @@ void PluginManagerImpl::unload(const QString& pluginName)
 
     emit unloaded(container->name, container->type);
 
-    qDebug() << pluginName << "unloaded:" << container->filePath;
+    qDebug().noquote() << pluginName << "unloaded:" << toNativePath(container->filePath);
 }
 
 bool PluginManagerImpl::load(const QString& pluginName)
@@ -604,7 +601,7 @@ void PluginManagerImpl::pluginLoaded(PluginManagerImpl::PluginContainer* contain
 
     emit loaded(container->plugin, container->type);
     if (!container->builtIn)
-        qDebug() << container->name << "loaded:" << container->filePath;
+        qDebug().noquote() << container->name << "loaded:" << toNativePath(container->filePath);
 }
 
 void PluginManagerImpl::addPluginToCollections(Plugin* plugin)

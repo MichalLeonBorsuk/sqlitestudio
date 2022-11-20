@@ -8,10 +8,8 @@
 #include "services/pluginmanager.h"
 #include "dbtree/dbtree.h"
 #include "dbtree/dbtreemodel.h"
-#include "dbtree/dbtreeitem.h"
 #include "iconmanager.h"
 #include "syntaxhighlighterplugin.h"
-#include "sqlitesyntaxhighlighter.h"
 #include "plugins/scriptingplugin.h"
 #include "common/userinputfilter.h"
 #include "selectabledbmodel.h"
@@ -19,8 +17,11 @@
 #include <QDebug>
 #include <QDesktopServices>
 #include <QStyleFactory>
+#include <QSyntaxHighlighter>
 
 // TODO handle plugin loading/unloading to update editor state
+
+CFG_KEYS_DEFINE(FunctionsEditor)
 
 FunctionsEditor::FunctionsEditor(QWidget *parent) :
     MdiChild(parent),
@@ -52,26 +53,26 @@ Icon* FunctionsEditor::getIconNameForMdiWindow()
 
 QString FunctionsEditor::getTitleForMdiWindow()
 {
-    return tr("SQL function editor");
+    return tr("SQL functions editor");
 }
 
 void FunctionsEditor::createActions()
 {
-    createAction(COMMIT, ICONS.COMMIT, tr("Commit all function changes"), this, SLOT(commit()), ui->toolBar);
-    createAction(ROLLBACK, ICONS.ROLLBACK, tr("Rollback all function changes"), this, SLOT(rollback()), ui->toolBar);
+    createAction(COMMIT, ICONS.COMMIT, tr("Commit all function changes"), this, SLOT(commit()), ui->toolBar, this);
+    createAction(ROLLBACK, ICONS.ROLLBACK, tr("Rollback all function changes"), this, SLOT(rollback()), ui->toolBar, this);
     ui->toolBar->addSeparator();
-    createAction(ADD, ICONS.NEW_FUNCTION, tr("Create new function"), this, SLOT(newFunction()), ui->toolBar);
-    createAction(DELETE, ICONS.DELETE_FUNCTION, tr("Delete selected function"), this, SLOT(deleteFunction()), ui->toolBar);
+    createAction(ADD, ICONS.NEW_FUNCTION, tr("Create new function"), this, SLOT(newFunction()), ui->toolBar, this);
+    createAction(DELETE, ICONS.DELETE_FUNCTION, tr("Delete selected function"), this, SLOT(deleteFunction()), ui->toolBar, this);
     ui->toolBar->addSeparator();
-    createAction(HELP, ICONS.HELP, tr("Custom SQL functions manual"), this, SLOT(help()), ui->toolBar);
+    createAction(HELP, ICONS.HELP, tr("Custom SQL functions manual"), this, SLOT(help()), ui->toolBar, this);
 
     // Args toolbar
-    createAction(ARG_ADD, ICONS.INSERT_FN_ARG, tr("Add function argument"), this, SLOT(addFunctionArg()), ui->argsToolBar);
-    createAction(ARG_EDIT, ICONS.RENAME_FN_ARG, tr("Rename function argument"), this, SLOT(editFunctionArg()), ui->argsToolBar);
-    createAction(ARG_DEL, ICONS.DELETE_FN_ARG, tr("Delete function argument"), this, SLOT(delFunctionArg()), ui->argsToolBar);
+    createAction(ARG_ADD, ICONS.INSERT_FN_ARG, tr("Add function argument"), this, SLOT(addFunctionArg()), ui->argsToolBar, this);
+    createAction(ARG_EDIT, ICONS.RENAME_FN_ARG, tr("Rename function argument"), this, SLOT(editFunctionArg()), ui->argsToolBar, this);
+    createAction(ARG_DEL, ICONS.DELETE_FN_ARG, tr("Delete function argument"), this, SLOT(delFunctionArg()), ui->argsToolBar, this);
     ui->argsToolBar->addSeparator();
-    createAction(ARG_MOVE_UP, ICONS.MOVE_UP, tr("Move function argument up"), this, SLOT(moveFunctionArgUp()), ui->argsToolBar);
-    createAction(ARG_MOVE_DOWN, ICONS.MOVE_DOWN, tr("Move function argument down"), this, SLOT(moveFunctionArgDown()), ui->argsToolBar);
+    createAction(ARG_MOVE_UP, ICONS.MOVE_UP, tr("Move function argument up"), this, SLOT(moveFunctionArgUp()), ui->argsToolBar, this);
+    createAction(ARG_MOVE_DOWN, ICONS.MOVE_DOWN, tr("Move function argument down"), this, SLOT(moveFunctionArgDown()), ui->argsToolBar, this);
 
 #ifdef Q_OS_MACX
     QStyle *fusion = QStyleFactory::create("Fusion");
@@ -82,6 +83,9 @@ void FunctionsEditor::createActions()
 
 void FunctionsEditor::setupDefShortcuts()
 {
+    // Widget context
+    setShortcutContext({COMMIT}, Qt::WidgetWithChildrenShortcut);
+    BIND_SHORTCUTS(FunctionsEditor, Action);
 }
 
 QToolBar* FunctionsEditor::getToolBar(int toolbar) const
@@ -142,13 +146,13 @@ void FunctionsEditor::init()
     model->setData(FUNCTIONS->getAllScriptFunctions());
 
     // Language plugins
-    for (ScriptingPlugin* plugin : PLUGINS->getLoadedPlugins<ScriptingPlugin>())
+    for (ScriptingPlugin*& plugin : PLUGINS->getLoadedPlugins<ScriptingPlugin>())
         scriptingPlugins[plugin->getLanguage()] = plugin;
 
     ui->langCombo->addItems(scriptingPlugins.keys());
 
     // Syntax highlighting plugins
-    for (SyntaxHighlighterPlugin* plugin : PLUGINS->getLoadedPlugins<SyntaxHighlighterPlugin>())
+    for (SyntaxHighlighterPlugin*& plugin : PLUGINS->getLoadedPlugins<SyntaxHighlighterPlugin>())
         highlighterPlugins[plugin->getLanguageName()] = plugin;
 
     updateState();
@@ -630,7 +634,7 @@ QVariant FunctionsEditor::saveSession()
 
 bool FunctionsEditor::isUncommitted() const
 {
-    return model->isModified();
+    return model->isModified() || currentModified;
 }
 
 QString FunctionsEditor::getQuitUncommittedConfirmMessage() const

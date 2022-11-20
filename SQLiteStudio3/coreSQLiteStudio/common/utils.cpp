@@ -54,6 +54,7 @@ void initUtils()
 {
     qRegisterMetaType<QList<int>>("QList<int>");
     qRegisterMetaType<DbObjectType>("DbObjectType");
+    qRegisterMetaType<QList<QPair<QString, QString>>>("QList<QPair<QString, QString>>");
 }
 
 bool isXDigit(const QChar& c)
@@ -966,12 +967,14 @@ QStringList concat(const QList<QStringList>& list)
 QString doubleToString(const QVariant& val)
 {
     QString str = val.toString();
-    if (str.contains("e"))
+    if (str.contains("e") || str.midRef(str.indexOf('.') + 1).length() > 14)
+    {
         str = QString::number(val.toDouble(), 'f', 14).remove(QRegExp("0*$"));
+        if (str.endsWith("."))
+            str += "0";
+    }
     else if (!str.contains('.'))
         str += ".0";
-    else if (str.mid(str.indexOf('.') + 1).length() > 14)
-        str = QString::number(val.toDouble(), 'f', 14).remove(QRegExp("0*$"));
 
     return str;
 }
@@ -1105,4 +1108,23 @@ QString indentMultiline(const QString& str)
         line = line.prepend("    ");
 
     return lines.join("\n");
+}
+
+QString toNativePath(const QString& path)
+{
+    return QDir::toNativeSeparators(path);
+}
+
+QStringList sharedLibFileFilters()
+{
+    static QStringList filters({
+#ifdef Q_OS_WIN
+        "*.dll"
+#elif defined Q_OS_MACOS
+        "*.dylib"
+#elif defined Q_OS_LINUX || Q_OS_BSD
+        "*.so"
+#endif
+    });
+    return filters;
 }

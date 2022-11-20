@@ -1,10 +1,10 @@
 #include "sqleditor.h"
+#include "common/mouseshortcut.h"
 #include "sqlitesyntaxhighlighter.h"
 #include "db/db.h"
-#include "log.h"
 #include "uiconfig.h"
 #include "uiutils.h"
-#include "services/config.h"
+#include "services/codesnippetmanager.h"
 #include "iconmanager.h"
 #include "completer/completerwindow.h"
 #include "completionhelper.h"
@@ -18,7 +18,6 @@
 #include "dbobjectdialogs.h"
 #include "searchtextlocator.h"
 #include "services/codeformatter.h"
-#include "sqlitestudio.h"
 #include "style.h"
 #include "dbtree/dbtreeitem.h"
 #include "dbtree/dbtree.h"
@@ -82,20 +81,24 @@ SqlEditor::~SqlEditor()
 void SqlEditor::init()
 {
     highlighter = new SqliteSyntaxHighlighter(document());
-    setFont(CFG_UI.Fonts.SqlEditor.get());
     initActions();
     setupMenu();
+
+    objectsInNamedDbWatcher = new QFutureWatcher<void>(this);
+    connect(objectsInNamedDbWatcher, SIGNAL(finished()), this, SLOT(scheduleQueryParserForSchemaRefresh()));
 
     textLocator = new SearchTextLocator(document(), this);
     connect(textLocator, SIGNAL(found(int,int)), this, SLOT(found(int,int)));
     connect(textLocator, SIGNAL(reachedEnd()), this, SLOT(reachedEnd()));
 
     lineNumberArea = new LineNumberArea(this);
+    changeFont(CFG_UI.Fonts.SqlEditor.get());
 
     connect(this, SIGNAL(blockCountChanged(int)), this, SLOT(updateLineNumberAreaWidth()));
     connect(this, SIGNAL(updateRequest(QRect,int)), this, SLOT(updateLineNumberArea(QRect,int)));
     connect(this, SIGNAL(textChanged()), this, SLOT(checkContentSize()));
     connect(this, SIGNAL(cursorPositionChanged()), this, SLOT(cursorMoved()));
+    MouseShortcut::forWheel(Qt::ControlModifier, this, SLOT(fontSizeChangeRequested(int)), viewport());
 
     updateLineNumberAreaWidth();
     highlightCurrentCursorContext();
@@ -168,6 +171,8 @@ void SqlEditor::createActions()
     createAction(FIND_PREV, tr("Find previous", "sql editor"), this, SLOT(findPrevious()), this);
     createAction(REPLACE, ICONS.SEARCH_AND_REPLACE, tr("Replace", "sql editor"), this, SLOT(replace()), this);
     createAction(TOGGLE_COMMENT, tr("Toggle comment", "sql editor"), this, SLOT(toggleComment()), this);
+    createAction(INCR_FONT_SIZE, tr("Increase font size", "sql editor"), this, SLOT(incrFontSize()), this);
+    createAction(DECR_FONT_SIZE, tr("Decrease font size", "sql editor"), this, SLOT(decrFontSize()), this);
 
     actionMap[CUT]->setEnabled(false);
     actionMap[COPY]->setEnabled(false);
@@ -185,7 +190,7 @@ void SqlEditor::createActions()
 void SqlEditor::setupDefShortcuts()
 {
     setShortcutContext({CUT, COPY, PASTE, DELETE, SELECT_ALL, UNDO, REDO, COMPLETE, FORMAT_SQL, SAVE_SQL_FILE, OPEN_SQL_FILE,
-                        DELETE_LINE}, Qt::WidgetWithChildrenShortcut);
+                        DELETE_LINE, INCR_FONT_SIZE, DECR_FONT_SIZE}, Qt::WidgetWithChildrenShortcut);
 
     BIND_SHORTCUTS(SqlEditor, Action);
 }
@@ -271,6 +276,9 @@ bool SqlEditor::handleValidObjectContextMenu(const QPoint& pos)
 
 void SqlEditor::saveToFile(const QString &fileName)
 {
+    if (!openSaveActionsEnabled)
+        return;
+
     QFile file(fileName);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
     {
@@ -305,6 +313,19 @@ void SqlEditor::toggleLineCommentForLine(const QTextBlock& block)
 bool SqlEditor::getHighlightingSyntax() const
 {
     return highlightingSyntax;
+}
+
+void SqlEditor::setOpenSaveActionsEnabled(bool value)
+{
+    openSaveActionsEnabled = value;
+    if (value)
+    {
+        noConfigShortcutActions.remove(SAVE_SQL_FILE);
+        noConfigShortcutActions.remove(SAVE_AS_SQL_FILE);
+        noConfigShortcutActions.remove(OPEN_SQL_FILE);
+    }
+    else
+        noConfigShortcutActions << SAVE_SQL_FILE << SAVE_AS_SQL_FILE << OPEN_SQL_FILE;
 }
 
 void SqlEditor::updateUndoAction(bool enabled)
@@ -520,6 +541,12 @@ void SqlEditor::updateCompleterPosition()
 
 void SqlEditor::completeSelected()
 {
+    if (completer->getMode() == CompleterWindow::SNIPPETS)
+    {
+        insertPlainText(CODESNIPPETS->getCodeByName(completer->getSnippetName()));
+        return;
+    }
+
     deletePreviousChars(completer->getNumberOfCharsToRemove());
 
     ExpectedTokenPtr token = completer->getSelected();
@@ -538,7 +565,7 @@ void SqlEditor::completeSelected()
 
 void SqlEditor::checkForAutoCompletion()
 {
-    if (!db || !autoCompletion || deletionKeyPressed || !richFeaturesEnabled)
+    if (!db || !autoCompletion || deletionKeyPressed || !richFeaturesEnabled || !CFG_CORE.CodeAssistant.AutoTrigger.get())
         return;
 
     Lexer lexer;
@@ -578,6 +605,7 @@ void SqlEditor::refreshValidObjects()
             objectsInNamedDb[dbName] << objects;
         }
     });
+    objectsInNamedDbWatcher->setFuture(objectsInNamedDbFuture);
 }
 
 void SqlEditor::setObjectLinks(bool enabled)
@@ -904,6 +932,11 @@ void SqlEditor::parseContents()
     highlightSyntax();
 }
 
+void SqlEditor::scheduleQueryParserForSchemaRefresh()
+{
+    scheduleQueryParser(true, true);
+}
+
 void SqlEditor::checkForSyntaxErrors()
 {
     syntaxValidated = true;
@@ -968,7 +1001,7 @@ void SqlEditor::checkForValidObjects()
     }
 }
 
-void SqlEditor::scheduleQueryParser(bool force)
+void SqlEditor::scheduleQueryParser(bool force, bool skipCompleter)
 {
     if (!document()->isModified() && !force)
         return;
@@ -977,7 +1010,8 @@ void SqlEditor::scheduleQueryParser(bool force)
 
     document()->setModified(false);
     queryParserTrigger->schedule();
-    autoCompleteTrigger->schedule();
+    if (!skipCompleter)
+        autoCompleteTrigger->schedule();
 }
 
 int SqlEditor::sqlIndex(int idx)
@@ -1120,6 +1154,9 @@ void SqlEditor::saveToFile()
 
 void SqlEditor::saveAsToFile()
 {
+    if (!openSaveActionsEnabled)
+        return;
+
     QString dir = getFileDialogInitPath();
     QString fName = QFileDialog::getSaveFileName(this, tr("Save to file"), dir);
     if (fName.isNull())
@@ -1132,6 +1169,9 @@ void SqlEditor::saveAsToFile()
 
 void SqlEditor::loadFromFile()
 {
+    if (!openSaveActionsEnabled)
+        return;
+
     QString dir = getFileDialogInitPath();
     QString filters = tr("SQL scripts (*.sql);;All files (*)");
     QString fName = QFileDialog::getOpenFileName(this, tr("Open file"), dir, filters);
@@ -1354,7 +1394,9 @@ void SqlEditor::reachedEnd()
 
 void SqlEditor::changeFont(const QVariant& font)
 {
-    setFont(font.value<QFont>());
+    auto f = font.value<QFont>();
+    setFont(f);
+    lineNumberArea->setFont(f);
 }
 
 void SqlEditor::configModified()
@@ -1455,6 +1497,28 @@ void SqlEditor::wordWrappingChanged(const QVariant& value)
 void SqlEditor::currentCursorContextDelayedHighlight()
 {
     highlightCurrentCursorContext(true);
+}
+
+void SqlEditor::fontSizeChangeRequested(int delta)
+{
+    changeFontSize(delta >= 0 ? 1 : -1);
+}
+
+void SqlEditor::incrFontSize()
+{
+    changeFontSize(1);
+}
+
+void SqlEditor::decrFontSize()
+{
+    changeFontSize(-1);
+}
+
+void SqlEditor::changeFontSize(int factor)
+{
+    auto f = font();
+    f.setPointSize(f.pointSize() + factor);
+    CFG_UI.Fonts.SqlEditor.set(f);
 }
 
 void SqlEditor::colorsConfigChanged()

@@ -1,7 +1,5 @@
 #include "formmanager.h"
-#include "services/config.h"
 #include "services/pluginmanager.h"
-#include "sqlitestudio.h"
 #include "uiloader.h"
 #include "common/unused.h"
 #include "common/global.h"
@@ -143,7 +141,7 @@ void FormManager::loadRecurently(const QString& path, const QString& prefix)
             continue;
         }
 
-        qDebug() << "Loading form file:" << fullPath;
+        qDebug().noquote() << "Loading form file:" << toNativePath(fullPath);
 
         widgetName = getWidgetName(fullPath);
         if (widgetName.isNull())

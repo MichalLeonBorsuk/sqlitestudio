@@ -58,6 +58,7 @@ class AbstractDb3 : public AbstractDb
         bool initAfterCreated();
         void initAfterOpen();
         SqlQueryPtr prepare(const QString& query);
+        bool flushWalInternal();
         QString getTypeLabel();
         bool deregisterFunction(const QString& name, int argCount);
         bool registerScalarFunction(const QString& name, int argCount, bool deterministic);
@@ -121,6 +122,7 @@ class AbstractDb3 : public AbstractDb
         };
 
         QString extractLastError();
+        QString extractLastError(typename T::handle* handle);
         void cleanUp();
         void resetError();
 
@@ -407,6 +409,22 @@ int AbstractDb3<T>::getErrorCodeInternal()
 }
 
 template <class T>
+bool AbstractDb3<T>::flushWalInternal()
+{
+    resetError();
+    if (!dbHandle)
+        return false;
+
+    int res = T::wal_checkpoint_v2(dbHandle, nullptr, T::CHECKPOINT_FULL, nullptr, nullptr);
+    if (res != T::OK)
+    {
+        dbErrorMessage = QObject::tr("Could not run WAL checkpoint: %1").arg(extractLastError());
+        dbErrorCode = res;
+    }
+    return res == T::OK;
+}
+
+template <class T>
 bool AbstractDb3<T>::openInternal()
 {
     resetError();
@@ -414,11 +432,11 @@ bool AbstractDb3<T>::openInternal()
     int res = T::open_v2(path.toUtf8().constData(), &handle, T::OPEN_READWRITE|T::OPEN_CREATE, nullptr);
     if (res != T::OK)
     {
+        dbErrorMessage = QObject::tr("Could not open database: %1").arg(extractLastError(handle));
+        dbErrorCode = res;
         if (handle)
             T::close(handle);
 
-        dbErrorMessage = QObject::tr("Could not open database: %1").arg(extractLastError());
-        dbErrorCode = res;
         return false;
     }
     dbHandle = handle;
@@ -560,8 +578,14 @@ bool AbstractDb3<T>::deregisterCollationInternal(const QString& name)
 template <class T>
 QString AbstractDb3<T>::extractLastError()
 {
-    dbErrorCode = T::extended_errcode(dbHandle);
-    dbErrorMessage = QString::fromUtf8(T::errmsg(dbHandle));
+    return extractLastError(dbHandle);
+}
+
+template<class T>
+QString AbstractDb3<T>::extractLastError(typename T::handle* handle)
+{
+    dbErrorCode = T::extended_errcode(handle);
+    dbErrorMessage = QString::fromUtf8(T::errmsg(handle));
     return dbErrorMessage;
 }
 
@@ -807,11 +831,25 @@ void AbstractDb3<T>::registerDefaultCollation(void* fnUserData, typename T::hand
         return;
     }
 
+    SqlQueryPtr results = db->exec("PRAGMA collation_list");
+    if (results->isError())
+        qWarning() << "Unable to query existing collations while registering needed collation" << collationName << ":" << db->getErrorText();
+
+    QStringList existingCollations = results->columnAsList<QString>("name");
+    if (existingCollations.contains(collationName))
+    {
+        qDebug() << "Requested collation" << collationName << "already exists. Probably different input encoding was expected,"
+                 << "but SQLite should deal with it. Skipping default collation registration.";
+        return;
+    }
+
     int res = T::create_collation_v2(fnDbHandle, collationName, T::UTF8, nullptr,
                                           &AbstractDb3<T>::evaluateDefaultCollation, nullptr);
 
     if (res != T::OK)
         qWarning() << "Could not register default collation in AbstractDb3<T>::registerDefaultCollation().";
+    else
+        qDebug() << "Registered default collation on demand, under name:" << collationName;
 }
 
 template <class T>

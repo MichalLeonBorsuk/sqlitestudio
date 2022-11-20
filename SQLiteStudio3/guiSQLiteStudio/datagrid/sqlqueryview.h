@@ -5,7 +5,6 @@
 #include "common/extactioncontainer.h"
 #include "db/queryexecutor.h"
 #include "guiSQLiteStudio_global.h"
-#include "common/table.h"
 #include <QTableView>
 #include <QHeaderView>
 
@@ -19,6 +18,7 @@ class QProgressBar;
 class QMenu;
 
 CFG_KEY_LIST(SqlQueryView, QObject::tr("Data grid view"),
+    CFG_KEY_ENTRY(EDIT_CURRENT,      Qt::Key_F2,                        QObject::tr("Edit current cell inline"))
     CFG_KEY_ENTRY(COPY,              Qt::CTRL + Qt::Key_C,              QObject::tr("Copy cell(s) contents to clipboard"))
     CFG_KEY_ENTRY(COPY_WITH_HEADER,  Qt::CTRL + Qt::SHIFT + Qt::Key_C,  QObject::tr("Copy cell(s) contents together with header to clipboard"))
 //    CFG_KEY_ENTRY(COPY_AS,           Qt::CTRL + Qt::ALT + Qt::Key_C,  QObject::tr(""))
@@ -31,12 +31,14 @@ CFG_KEY_LIST(SqlQueryView, QObject::tr("Data grid view"),
     CFG_KEY_ENTRY(DELETE_ROW,        Qt::Key_Delete,                    QObject::tr("Delete selected data row"))
     CFG_KEY_ENTRY(INSERT_ROW,        Qt::Key_Insert,                    QObject::tr("Insert new data row"))
     CFG_KEY_ENTRY(OPEN_VALUE_EDITOR, Qt::ALT + Qt::Key_Return,          QObject::tr("Open contents of selected cell in a separate editor"))
+    CFG_KEY_ENTRY(ADJUST_ROWS_SIZE,  Qt::ALT + Qt::Key_H,               QObject::tr("Toggle the height adjustment of rows"))
+    CFG_KEY_ENTRY(INCR_FONT_SIZE,    Qt::CTRL + Qt::Key_Plus,           QObject::tr("Increase font size", "data view"))
+    CFG_KEY_ENTRY(DECR_FONT_SIZE,    Qt::CTRL + Qt::Key_Minus,          QObject::tr("Decrease font size", "data view"))
 )
 
 class GUI_API_EXPORT SqlQueryView : public QTableView, public ExtActionContainer
 {
-        Q_OBJECT
-        Q_ENUMS(Action)
+    Q_OBJECT
 
     public:
         enum Action
@@ -55,15 +57,20 @@ class GUI_API_EXPORT SqlQueryView : public QTableView, public ExtActionContainer
             DELETE_ROW,
             SELECTIVE_COMMIT,
             SELECTIVE_ROLLBACK,
+            EDIT_CURRENT,
             OPEN_VALUE_EDITOR,
             SORT_DIALOG,
             RESET_SORTING,
-            LOAD_FULL_VALUES,
             GENERATE_SELECT,
             GENERATE_INSERT,
             GENERATE_UPDATE,
-            GENERATE_DELETE
+            GENERATE_DELETE,
+            INVERT_SELECTION,
+            ADJUST_ROWS_SIZE,
+            INCR_FONT_SIZE,
+            DECR_FONT_SIZE
         };
+        Q_ENUM(Action)
 
         enum ToolBar
         {
@@ -86,7 +93,6 @@ class GUI_API_EXPORT SqlQueryView : public QTableView, public ExtActionContainer
 
     protected:
         void scrollContentsBy(int dx, int dy);
-        void mouseMoveEvent(QMouseEvent *event);
 
     private:
         class Header : public QHeaderView
@@ -110,6 +116,7 @@ class GUI_API_EXPORT SqlQueryView : public QTableView, public ExtActionContainer
         void addFkActionsToContextMenu(SqlQueryItem* currentItem);
         void goToReferencedRow(const QString& table, const QString& column, const QVariant& value);
         void copy(bool withHeaders);
+        void changeFontSize(int factor);
 
         constexpr static const char* mimeDataId = "application/x-sqlitestudio-data-view-data";
         constexpr static const int minHeaderWidth = 15;
@@ -125,8 +132,6 @@ class GUI_API_EXPORT SqlQueryView : public QTableView, public ExtActionContainer
         bool simpleBrowserMode = false;
         bool ignoreColumnWidthChanges = false;
         int beforeExecutionHorizontalPosition = -1;
-        int headerContextMenuSection = -1;
-        QModelIndex indexUnderCursor;
 
     private slots:
         void updateCommitRollbackActions(bool enabled);
@@ -141,7 +146,13 @@ class GUI_API_EXPORT SqlQueryView : public QTableView, public ExtActionContainer
         void generateInsert();
         void generateUpdate();
         void generateDelete();
-        void loadFullValuesForColumn();
+        void editCurrent();
+        void toggleRowsHeightAdjustment(bool enabled);
+        void adjustRowToContents(int section);
+        void fontSizeChangeRequested(int delta);
+        void incrFontSize();
+        void decrFontSize();
+        void invertSelection();
 
     public slots:
         void executionStarted();

@@ -1,11 +1,9 @@
 #include "dataview.h"
-#include "datagrid/sqltablemodel.h"
 #include "datagrid/sqlquerymodel.h"
 #include "datagrid/sqlqueryview.h"
 #include "formview.h"
 #include "common/extlineedit.h"
 #include "mainwindow.h"
-#include "statusfield.h"
 #include "common/intvalidator.h"
 #include "common/extaction.h"
 #include "iconmanager.h"
@@ -77,7 +75,9 @@ void DataView::initSlots()
     connect(model, SIGNAL(executionStarted()), gridView, SLOT(executionStarted()));
     connect(model, SIGNAL(loadingEnded(bool)), gridView, SLOT(executionEnded()));
     connect(model, SIGNAL(totalRowsAndPagesAvailable()), this, SLOT(totalRowsAndPagesAvailable()));
+    connect(gridView->verticalHeader(), SIGNAL(sectionClicked(int)), this, SLOT(rowsHeaderClicked(int)));
     connect(gridView->horizontalHeader(), SIGNAL(sectionClicked(int)), this, SLOT(columnsHeaderClicked(int)));
+    connect(gridView->horizontalHeader(), SIGNAL(sectionDoubleClicked(int)), this, SLOT(columnsHeaderDoubleClicked(int)));
     connect(this, SIGNAL(currentChanged(int)), this, SLOT(tabChanged(int)));
     connect(model, SIGNAL(itemEditionEnded(SqlQueryItem*)), this, SLOT(adjustColumnWidth(SqlQueryItem*)));
     connect(gridView, SIGNAL(scrolledBy(int, int)), this, SLOT(syncFilterScrollPosition()));
@@ -235,8 +235,8 @@ void DataView::createActions()
 
     createAction(SELECTIVE_COMMIT, ICONS.COMMIT, tr("Commit changes for selected cells", "data view"), this, SLOT(selectiveCommitGrid()), this);
     createAction(SELECTIVE_ROLLBACK, ICONS.ROLLBACK, tr("Rollback changes for selected cells", "data view"), this, SLOT(selectiveRollbackGrid()), this);
-    createAction(SHOW_GRID_VIEW, tr("Show grid view of results", "sql editor"), this, SLOT(showGridView()), this);
-    createAction(SHOW_FORM_VIEW, tr("Show form view of results", "sql editor"), this, SLOT(showFormView()), this);
+    createAction(SHOW_GRID_VIEW, tr("Show grid view of results", "data view"), this, SLOT(showGridView()), this);
+    createAction(SHOW_FORM_VIEW, tr("Show form view of results", "data view"), this, SLOT(showFormView()), this);
 
     connect(gridView, SIGNAL(requestForRowInsert()), this, SLOT(insertRow()));
     connect(gridView, SIGNAL(requestForMultipleRowInsert()), this, SLOT(insertMultipleRows()));
@@ -424,7 +424,6 @@ void DataView::goToFormRow(IndexModifier idxMod)
         return;
 
     gridView->setCurrentIndex(newRowIdx);
-    model->loadFullDataForEntireRow(row);
     formView->updateFromGrid();
     updateCurrentFormViewRow();
 }
@@ -844,6 +843,9 @@ void DataView::applyFilter()
             case DataView::FilterMode::REGEXP:
                 model->applyRegExpFilter(filterValues);
                 break;
+            case FilterMode::EXACT:
+                model->applyStrictFilter(filterValues);
+                break;
         }
     }
     else
@@ -859,6 +861,9 @@ void DataView::applyFilter()
                 break;
             case DataView::FilterMode::REGEXP:
                 model->applyRegExpFilter(value);
+                break;
+            case DataView::FilterMode::EXACT:
+                model->applyStrictFilter(value);
                 break;
         }
     }
@@ -989,20 +994,24 @@ void DataView::recreateFilterInputs()
 
 void DataView::createFilteringActions()
 {
-    createAction(FILTER_STRING, ICONS.APPLY_FILTER_TXT, tr("Filter by text", "data view"), this, SLOT(filterModeSelected()), this);
+    createAction(FILTER_STRING, ICONS.APPLY_FILTER_TXT, tr("Filter by text (if contains)", "data view"), this, SLOT(filterModeSelected()), this);
+    createAction(FILTER_EXACT, ICONS.APPLY_FILTER_TXT_STRICT, tr("Filter strictly by text (if equals)", "data view"), this, SLOT(filterModeSelected()), this);
     createAction(FILTER_REGEXP, ICONS.APPLY_FILTER_RE, tr("Filter by the Regular Expression", "data view"), this, SLOT(filterModeSelected()), this);
     createAction(FILTER_SQL, ICONS.APPLY_FILTER_SQL, tr("Filter by SQL expression", "data view"), this, SLOT(filterModeSelected()), this);
 
     actionMap[FILTER_STRING]->setProperty(DATA_VIEW_FILTER_PROP, static_cast<int>(FilterMode::STRING));
+    actionMap[FILTER_EXACT]->setProperty(DATA_VIEW_FILTER_PROP, static_cast<int>(FilterMode::EXACT));
     actionMap[FILTER_REGEXP]->setProperty(DATA_VIEW_FILTER_PROP, static_cast<int>(FilterMode::REGEXP));
     actionMap[FILTER_SQL]->setProperty(DATA_VIEW_FILTER_PROP, static_cast<int>(FilterMode::SQL));
 
     QActionGroup* filterGroup = new QActionGroup(gridToolBar);
     filterGroup->addAction(actionMap[FILTER_STRING]);
+    filterGroup->addAction(actionMap[FILTER_EXACT]);
     filterGroup->addAction(actionMap[FILTER_SQL]);
     filterGroup->addAction(actionMap[FILTER_REGEXP]);
 
     actionMap[FILTER_STRING]->setCheckable(true);
+    actionMap[FILTER_EXACT]->setCheckable(true);
     actionMap[FILTER_REGEXP]->setCheckable(true);
     actionMap[FILTER_SQL]->setCheckable(true);
     actionMap[FILTER_STRING]->setChecked(true);
@@ -1013,6 +1022,7 @@ void DataView::createFilteringActions()
     actionMap[FILTER_VALUE] = gridToolBar->addWidget(filterEdit);
     createAction(FILTER, tr("Apply filter", "data view"), this, SLOT(applyFilter()), gridToolBar);
     attachActionInMenu(FILTER, actionMap[FILTER_STRING], gridToolBar);
+    attachActionInMenu(FILTER, actionMap[FILTER_EXACT], gridToolBar);
     attachActionInMenu(FILTER, actionMap[FILTER_REGEXP], gridToolBar);
     attachActionInMenu(FILTER, actionMap[FILTER_SQL], gridToolBar);
     addSeparatorInMenu(FILTER, gridToolBar);
@@ -1025,7 +1035,18 @@ void DataView::createFilteringActions()
     gridView->getHeaderContextMenu()->addAction(actionMap[FILTER_PER_COLUMN]);
 }
 
+
+void DataView::rowsHeaderClicked(int rowIdx)
+{
+    gridView->selectRow(rowIdx);
+}
+
 void DataView::columnsHeaderClicked(int columnIdx)
+{
+    gridView->selectColumn(columnIdx);
+}
+
+void DataView::columnsHeaderDoubleClicked(int columnIdx)
 {
     model->changeSorting(columnIdx);
 }
@@ -1045,8 +1066,6 @@ void DataView::tabChanged(int newIndex)
             if (!gridView->getCurrentIndex().isValid() && model->rowCount() > 0)
                 gridView->setCurrentRow(0);
 
-            int row = gridView->getCurrentIndex().row();
-            model->loadFullDataForEntireRow(row);
             formView->updateFromGrid();
             updateCurrentFormViewRow();
             break;

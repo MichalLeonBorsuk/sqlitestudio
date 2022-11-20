@@ -44,7 +44,7 @@ linux: {
     !exists($$TCL_CONFIG) {
 	# Debian case
         DEBIAN_ARCH_PATH=$$system(dpkg-architecture -qDEB_HOST_MULTIARCH)
-        TCL_CONFIG = /usr/lib/$$DEBIAN_ARCH_PATH/tcl$$TCL_VERSION/tclConfig.sh
+        TCL_CONFIG = $$PREFIX/lib/$$DEBIAN_ARCH_PATH/tcl$$TCL_VERSION/tclConfig.sh
     }
     message("Looking for $$TCL_CONFIG")
     !exists($$TCL_CONFIG) {
@@ -81,27 +81,18 @@ linux: {
 
 macx: {
     # Find tclsh
-    #TCLSH = $$system(echo "puts 1" | tclsh)
-    #!contains(TCLSH, 1): {
-    #    error("Could not find tclsh executable. ScriptingTcl plugin requires it to find out all Tcl libraries and headers. Make tclsh available in PATH.")
-    #}
-    #TCLSH = $$system(which tclsh)
+    TCLSH = $$system(echo "puts 1" | tclsh)
+    !contains(TCLSH, 1): {
+        error("Could not find tclsh executable. ScriptingTcl plugin requires it to find out all Tcl libraries and headers. Make tclsh available in PATH.")
+    }
+    TCLSH = $$system(which tclsh)
 
     # Find its version
-    #TCL_VERSION = $$system(echo "puts [info tclversion]" | tclsh)
-    #message("Found tclsh: $$TCLSH (version: $$TCL_VERSION)")
+    TCL_VERSION = $$system(echo "puts [info tclversion]" | tclsh)
+    message("Found tclsh: $$TCLSH (version: $$TCL_VERSION)")
 
     # Find tclConfig.sh
-    #TCL_CONFIG_DIR = $$system(echo "puts [info library]" | tclsh)
-    #TCL_CONFIG = $$TCL_CONFIG_DIR/../../tclConfig.sh
-
-    XCRUN = $$system(xcrun --version)
-    !contains(XCRUN, xcrun): {
-        error("Could not find xcrun executable. ScriptingTcl plugin requires it to find out all Tcl libraries and headers.")
-    }
-
-    SDK_PATH = $$system(xcrun --show-sdk-path)
-    TCL_CONFIG = $$SDK_PATH/System/Library/Frameworks/Tcl.framework/Versions/Current/tclConfig.sh
+    TCL_CONFIG = $$system(echo "puts [::tcl::pkgconfig get libdir,runtime]" | tclsh)/tclConfig.sh
 
     # Define other libs required when linking with Tcl
     eval($$system(cat $$TCL_CONFIG | grep TCL_LIBS))
@@ -148,8 +139,3 @@ win32: {
 
 RESOURCES += \
     scriptingtcl.qrc
-
-CONFIG += lrelease embed_translations
-QM_FILES_RESOURCE_PREFIX = /msg/translations
-
-TRANSLATIONS += $$files(translations/*.ts)

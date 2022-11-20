@@ -40,11 +40,23 @@ portable {
 
 unix: {
     isEmpty(LIBDIR) {
-	LIBDIR = /usr/lib
+	LIBDIR = $$PREFIX/lib
     }
     export(LIBDIR)
     isEmpty(BINDIR) {
-	BINDIR = /usr/bin
+	BINDIR = $$PREFIX/bin
     }
     export(BINDIR)
 }
+
+# Enable automatic translation files processing globally
+QMAKE_RESOURCE_FLAGS += -name $${TARGET}_${QMAKE_FILE_BASE}
+TRANSLATIONS += $$files($$_PRO_FILE_PWD_/translations/*.ts)
+defined(TARGET, "var") {
+    DEFINES += "PROJECT_MODULE_NAME=$${TARGET}"
+}
+!isEmpty(TRANSLATIONS) {
+    CONFIG += lrelease embed_translations
+    QM_FILES_RESOURCE_PREFIX = /msg/translations
+}
+

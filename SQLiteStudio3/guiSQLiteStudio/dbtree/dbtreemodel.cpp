@@ -420,7 +420,7 @@ QString DbTreeModel::getDbToolTip(DbTreeItem* item) const
         fileSize = QFile(db->getPath()).size();
 
     rows << toolTipHdrRowTmp.arg(iconPath).arg(tr("Database: %1", "dbtree tooltip").arg(db->getName()));
-    rows << toolTipRowTmp.arg("URI:").arg(db->getPath());
+    rows << toolTipRowTmp.arg(tr("URI:", "dbtree tooltip")).arg(toNativePath(db->getPath()));
 
     if (db->isValid())
     {
@@ -714,6 +714,7 @@ void DbTreeModel::dbConnected(Db* db, bool expandItem)
         if (CFG_UI.General.ExpandViews.get())
             treeView->expand(item->model()->index(1, 0, item->index())); // also expand views
     }
+    treeView->setCurrentIndex(item->index());
 }
 
 void DbTreeModel::dbDisconnected(Db* db)

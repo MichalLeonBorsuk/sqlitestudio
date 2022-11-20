@@ -1,6 +1,5 @@
 #include "configdialog.h"
 #include "ui_configdialog.h"
-#include "services/config.h"
 #include "uiconfig.h"
 #include "customconfigwidgetplugin.h"
 #include "services/pluginmanager.h"
@@ -17,7 +16,6 @@
 #include "plugins/confignotifiableplugin.h"
 #include "mainwindow.h"
 #include "common/unused.h"
-#include "sqlitestudio.h"
 #include "configmapper.h"
 #include "datatype.h"
 #include "uiutils.h"
@@ -44,6 +42,7 @@
 #include <QTableWidget>
 #include <QDesktopServices>
 #include <QtUiTools/QUiLoader>
+#include <QItemDelegate>
 #include <QKeySequenceEdit>
 #include <QPlainTextEdit>
 
@@ -55,6 +54,18 @@
     WidgetType* w##WidgetType = qobject_cast<WidgetType*>(widget);\
     if (w##WidgetType)\
         return getFilterString(w##WidgetType) + " " + Widget->toolTip();
+
+class ConfigDialogItemDelegate : public QItemDelegate
+{
+    public:
+        QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
+        {
+            QVariant userData = index.data(Qt::UserRole);
+            bool isCategory = userData.isValid() && userData.toBool();
+            QSize size = QItemDelegate::sizeHint(option, index);
+            return isCategory ? QSize(size.width(), size.height() * 1.7) : size;
+        }
+};
 
 ConfigDialog::ConfigDialog(QWidget *parent) :
     QDialog(parent),
@@ -167,6 +178,23 @@ QString ConfigDialog::getFilterString(QTableWidget *widget)
          strList << item->text() + " " + item->toolTip();
 
     return strList.join(" ");
+}
+
+void ConfigDialog::showEvent(QShowEvent* event)
+{
+    UNUSED(event);
+    ui->categoriesTree->resizeColumnToContents(0);
+    int adjustedColumnWidth = ui->categoriesTree->columnWidth(0) + 4;
+    if (adjustedColumnWidth > ui->categoriesTree->width()) {
+        if (adjustedColumnWidth > (width() / 2))
+            adjustedColumnWidth = width() / 2;
+
+        QList<int> sizes = ui->splitter->sizes();
+        int rightPartSize = sizes[0] + sizes[1] - adjustedColumnWidth;
+        sizes[0] = adjustedColumnWidth;
+        sizes[1] = rightPartSize;
+        ui->splitter->setSizes(sizes);
+    }
 }
 
 void ConfigDialog::init()
@@ -1084,12 +1112,6 @@ void ConfigDialog::adjustSyntaxColorsForStyle(QList<QWidget*>& unmodifiedColors)
         configMapper->applyConfigDefaultValueToWidget(w);
 }
 
-void ConfigDialog::initPreviewEditorsForSyntaxHighlighters()
-{
-    for (SyntaxHighlighterPlugin*& plugin : PLUGINS->getLoadedPlugins<SyntaxHighlighterPlugin>())
-        highlighterPluginLoaded(plugin);
-}
-
 void ConfigDialog::highlighterPluginLoaded(SyntaxHighlighterPlugin* plugin)
 {
     QPlainTextEdit* editor = nullptr;
@@ -1141,7 +1163,7 @@ QList<QWidget*> ConfigDialog::prepareCodeSyntaxColorsForStyle()
     for (QWidget*& w : configMapper->getAllConfigWidgets(ui->commonCodeColorsGroup))
     {
         CfgEntry* entry = configMapper->getConfigForWidget(w);
-        if (entry->getDefultValue() == entry->get())
+        if (entry->getDefaultValue() == entry->get())
             unmodified << w;
     }
     return unmodified;
@@ -1150,7 +1172,6 @@ QList<QWidget*> ConfigDialog::prepareCodeSyntaxColorsForStyle()
 void ConfigDialog::initColors()
 {
     CFG_UI.Colors.begin();
-    initPreviewEditorsForSyntaxHighlighters();
     connect(configMapper, &ConfigMapper::modified,
             [this](QWidget* widget)
             {
@@ -1352,8 +1373,7 @@ QTreeWidgetItem* ConfigDialog::createPluginsTypeItem(const QString& widgetName, 
         if (item->statusTip(0) == widgetName)
             return item;
     }
-    return nullptr;
-
+    return new QTreeWidgetItem({title});
 }
 
 QTreeWidgetItem* ConfigDialog::getItemByTitle(const QString& title) const
@@ -1403,8 +1423,6 @@ void ConfigDialog::initPlugins()
     for (PluginType*& pluginType : PLUGINS->getPluginTypes())
     {
         typeItem = createPluginsTypeItem(pluginType->getConfigUiForm(), pluginType->getTitle());
-        if (!typeItem)
-            continue;
 
         item->addChild(typeItem);
         pluginTypeToItemMap[pluginType] = typeItem;
@@ -1654,6 +1672,7 @@ void ConfigDialog::initShortcuts()
     new UserInputFilter(ui->shortcutsFilterEdit, this, SLOT(applyShortcutsFilter(QString)));
 
     QList<CfgCategory*> categories = getShortcutsCfgCategories();
+    ui->shortcutsTable->setItemDelegate(new ConfigDialogItemDelegate());
 
     sSort(categories, [](CfgCategory* cat1, CfgCategory* cat2) -> bool
     {
@@ -1666,23 +1685,11 @@ void ConfigDialog::initShortcuts()
 
 void ConfigDialog::initShortcuts(CfgCategory *cfgCategory)
 {
-    QTreeWidgetItem* item = nullptr;
-    QFont font;
-    QModelIndex categoryIndex;
-    QModelIndex itemIndex;
-    QKeySequenceEdit *sequenceEdit = nullptr;
-    QToolButton* clearButton = nullptr;
-    QString title;
-    QSize itemSize;
-
     // Font and metrics
-    item = new QTreeWidgetItem({""});
-    font = item->font(0);
-
-    QFontMetrics fm(font);
-    itemSize = QSize(-1, (fm.ascent() + fm.descent() + 4));
-
-    delete item;
+    QTreeWidgetItem item({""});
+    QFont font = item.font(0);
+//    QFontMetrics fm(font);
+//    QSize itemSize = QSize(-1, -1);
 
     // Creating...
     QBrush categoryBg = ui->shortcutsTable->palette().button();
@@ -1694,15 +1701,16 @@ void ConfigDialog::initShortcuts(CfgCategory *cfgCategory)
     category->setFont(0, font);
     for (int i = 0; i < 3; i++)
     {
+        category->setData(i, Qt::UserRole, true);
         category->setBackground(i, categoryBg);
         category->setForeground(i, categoryFg);
     }
-    category->setSizeHint(0, itemSize);
+//    category->setSizeHint(0, itemSize);
     category->setFlags(category->flags() ^ Qt::ItemIsSelectable);
     ui->shortcutsTable->addTopLevelItem(category);
 
     int categoryRow = ui->shortcutsTable->topLevelItemCount() - 1;
-    categoryIndex = ui->shortcutsTable->model()->index(categoryRow, 0);
+    QModelIndex categoryIndex = ui->shortcutsTable->model()->index(categoryRow, 0);
 
     int itemRow = 0;
     QStringList entryNames = cfgCategory->getEntries().keys();
@@ -1710,21 +1718,21 @@ void ConfigDialog::initShortcuts(CfgCategory *cfgCategory)
     for (QString& entryName : entryNames)
     {
         // Title
-        title = cfgCategory->getEntries()[entryName]->getTitle();
+        QString title = cfgCategory->getEntries()[entryName]->getTitle();
         new QTreeWidgetItem(category, {title});
 
         // Key edit
-        sequenceEdit = new QKeySequenceEdit(ui->shortcutsTable);
+        QKeySequenceEdit* sequenceEdit = new QKeySequenceEdit(ui->shortcutsTable);
         sequenceEdit->setFixedWidth(150);
         sequenceEdit->setProperty("cfg", cfgCategory->getEntries()[entryName]->getFullKey());
-        itemIndex = ui->shortcutsTable->model()->index(itemRow, 1, categoryIndex);
+        QModelIndex itemIndex = ui->shortcutsTable->model()->index(itemRow, 1, categoryIndex);
         ui->shortcutsTable->setIndexWidget(itemIndex, sequenceEdit);
         configMapper->addExtraWidget(sequenceEdit);
 
         // Clear button
-        clearButton = new QToolButton(ui->shortcutsTable);
+        QToolButton* clearButton = new QToolButton(ui->shortcutsTable);
         clearButton->setIcon(ICONS.CLEAR_LINEEDIT);
-        connect(clearButton, &QToolButton::clicked, [this, sequenceEdit]()
+        connect(clearButton, &QToolButton::clicked, this, [this, sequenceEdit]()
         {
             sequenceEdit->clear();
             this->markModified();

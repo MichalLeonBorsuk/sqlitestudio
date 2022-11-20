@@ -1,4 +1,6 @@
 #include "dbdialog.h"
+#include "common/immediatetooltip.h"
+#include "services/notifymanager.h"
 #include "ui_dbdialog.h"
 #include "services/pluginmanager.h"
 #include "plugins/dbplugin.h"
@@ -18,6 +20,8 @@
 #include <QFileDialog>
 #include <QComboBox>
 #include <QTimer>
+#include <QMimeData>
+#include <QDir>
 
 DbDialog::DbDialog(Mode mode, QWidget *parent) :
     QDialog(parent),
@@ -42,14 +46,32 @@ void DbDialog::setPermanent(bool perm)
     ui->permamentCheckBox->setChecked(perm);
 }
 
+
+void DbDialog::dragEnterEvent(QDragEnterEvent* e)
+{
+    if (e->mimeData()->hasUrls())
+        e->acceptProposedAction();
+}
+
+void DbDialog::dropEvent(QDropEvent* e)
+{
+    if (!e->isAccepted() && e->mimeData()->hasUrls())
+    {
+        setPath(e->mimeData()->urls().first().toLocalFile());
+        e->accept();
+    }
+}
+
 QString DbDialog::getPath()
 {
-    return ui->fileEdit->text();
+    QString newPath = QDir::fromNativeSeparators(ui->fileEdit->text());
+    return newPath;
 }
 
 void DbDialog::setPath(const QString& path)
 {
-    ui->fileEdit->setText(path);
+    QString newPath = QDir::toNativeSeparators(path);
+    ui->fileEdit->setText(newPath);
 }
 
 QString DbDialog::getName()
@@ -82,7 +104,7 @@ void DbDialog::showEvent(QShowEvent *e)
         int idx = ui->typeCombo->findText(db->getTypeLabel());
         ui->typeCombo->setCurrentIndex(idx);
 
-        ui->fileEdit->setText(db->getPath());
+        setPath(db->getPath());
         ui->nameEdit->setText(db->getName());
         disableTypeAutodetection = false;
     }
@@ -111,8 +133,7 @@ void DbDialog::showEvent(QShowEvent *e)
 void DbDialog::init()
 {
     ui->setupUi(this);
-
-    ui->browseCreateButton->setIcon(ICONS.PLUS);
+    connIconTooltip = new ImmediateTooltip(ui->testConnIcon);
 
     for (DbPlugin* dbPlugin : PLUGINS->getLoadedPlugins<DbPlugin>())
         dbPlugins[dbPlugin->getLabel()] = dbPlugin;
@@ -122,12 +143,10 @@ void DbDialog::init()
     typeLabels.sort(Qt::CaseInsensitive);
     ui->typeCombo->addItems(typeLabels);
 
-    ui->browseCreateButton->setVisible(true);
     ui->testConnIcon->setVisible(false);
 
     connect(ui->fileEdit, SIGNAL(textChanged(QString)), this, SLOT(fileChanged(QString)));
     connect(ui->nameEdit, SIGNAL(textEdited(QString)), this, SLOT(nameModified(QString)));
-    connect(ui->browseCreateButton, SIGNAL(clicked()), this, SLOT(browseClicked()));
     connect(ui->browseOpenButton, SIGNAL(clicked()), this, SLOT(browseClicked()));
     connect(ui->testConnButton, SIGNAL(clicked()), this, SLOT(testConnectionClicked()));
     connect(ui->typeCombo, SIGNAL(currentIndexChanged(int)), this, SLOT(dbTypeChanged(int)));
@@ -145,7 +164,7 @@ void DbDialog::updateOptions()
     setUpdatesEnabled(false);
 
     // Remove olds
-    for (QWidget* w : optionWidgets)
+    for (QWidget*& w : optionWidgets)
     {
         ui->optionsGrid->removeWidget(w);
         delete w;
@@ -153,8 +172,7 @@ void DbDialog::updateOptions()
 
     customBrowseHandler = nullptr;
     ui->pathGroup->setTitle(tr("File"));
-    ui->browseOpenButton->setToolTip(tr("Browse for existing database file on local computer"));
-    ui->browseCreateButton->setVisible(true);
+    ui->browseOpenButton->setToolTip(tr("Select new or existing file on local computer"));
 
     optionWidgets.clear();
     optionKeyToWidget.clear();
@@ -191,7 +209,6 @@ void DbDialog::addOption(const DbPluginOption& option, int& row)
         // This option does not add any editor, but has it's own label for path edit.
         row--;
         ui->pathGroup->setTitle(option.label);
-        ui->browseCreateButton->setVisible(false);
         if (!option.toolTip.isEmpty())
             ui->browseOpenButton->setToolTip(option.toolTip);
 
@@ -450,7 +467,7 @@ void DbDialog::updateType()
     if (disableTypeAutodetection)
         return;
 
-    DbPlugin* validPlugin = SQLITESTUDIO->getDbManager()->getPluginForDbFile(ui->fileEdit->text());
+    DbPlugin* validPlugin = SQLITESTUDIO->getDbManager()->getPluginForDbFile(getPath());
     if (!validPlugin || validPlugin->getLabel() == ui->typeCombo->currentText())
         return;
 
@@ -476,14 +493,20 @@ QHash<QString, QVariant> DbDialog::collectOptions()
     return options;
 }
 
-bool DbDialog::testDatabase()
+bool DbDialog::testDatabase(QString& errorMsg)
 {
     if (ui->typeCombo->currentIndex() < 0)
+    {
+        errorMsg = tr("Database type not selected.");
         return false;
+    }
 
-    QString path = ui->fileEdit->text();
+    QString path = getPath();
     if (path.isEmpty())
+    {
+        errorMsg = tr("Database path not specified.");
         return false;
+    }
 
     QUrl url(path);
     if (url.scheme().isEmpty())
@@ -491,7 +514,7 @@ bool DbDialog::testDatabase()
 
     QHash<QString, QVariant> options = collectOptions();
     DbPlugin* plugin = dbPlugins[ui->typeCombo->currentText()];
-    Db* testDb = plugin->getInstance("", path, options);
+    Db* testDb = plugin->getInstance("", path, options, &errorMsg);
 
     bool res = false;
     if (testDb)
@@ -499,6 +522,7 @@ bool DbDialog::testDatabase()
         if (testDb->openForProbing())
         {
             res = !testDb->exec("SELECT sqlite_version();")->getSingleCell().toString().isEmpty();
+            errorMsg = testDb->getErrorText();
             testDb->closeQuiet();
         }
         delete testDb;
@@ -546,7 +570,7 @@ bool DbDialog::validate()
 
     if (fileState)
     {
-        registeredDb = DBLIST->getByPath(ui->fileEdit->text());
+        registeredDb = DBLIST->getByPath(getPath());
         if (registeredDb && (mode == Mode::ADD || registeredDb != db))
         {
             setValidState(ui->fileEdit, false, tr("This database is already on the list under name: %1").arg(registeredDb->getName()));
@@ -612,10 +636,9 @@ void DbDialog::valueForNameGenerationChanged()
     QString generatedName;
     DbPlugin* plugin = dbPlugins.count() > 0 ? dbPlugins[ui->typeCombo->currentText()] : nullptr;
     if (plugin)
-        generatedName = DBLIST->generateUniqueDbName(plugin, ui->fileEdit->text());
+        generatedName = DBLIST->generateUniqueDbName(plugin, getPath());
     else
-        generatedName = DBLIST->generateUniqueDbName(ui->fileEdit->text());
-
+        generatedName = DBLIST->generateUniqueDbName(getPath());
 
     ui->nameEdit->setText(generatedName);
 }
@@ -624,7 +647,7 @@ void DbDialog::browseForFile()
 {
     QString dir = getFileDialogInitPath();
     QString path = QFileDialog::getOpenFileName(0, QString(), dir);
-    if (path.isNull())
+    if (path.isEmpty())
         return;
 
     QString key = helperToKey[dynamic_cast<QWidget*>(sender())];
@@ -645,18 +668,16 @@ void DbDialog::browseClicked()
 {
     if (customBrowseHandler)
     {
-        QString newUrl = customBrowseHandler(ui->fileEdit->text());
+        QString newUrl = customBrowseHandler(getPath());
         if (!newUrl.isNull())
         {
-            ui->fileEdit->setText(newUrl);
+            setPath(newUrl);
             updateState();
         }
         return;
     }
 
-    bool createMode = (sender() == ui->browseCreateButton);
-
-    QFileInfo fileInfo(ui->fileEdit->text());
+    QFileInfo fileInfo(getPath());
     QString dir;
     if (ui->fileEdit->text().isEmpty())
         dir = getFileDialogInitPath();
@@ -667,7 +688,7 @@ void DbDialog::browseClicked()
     else
         dir = getFileDialogInitPath();
 
-    QString path = getDbPath(createMode, dir);
+    QString path = getDbPath(dir);
     if (path.isNull())
         return;
 
@@ -679,8 +700,19 @@ void DbDialog::browseClicked()
 
 void DbDialog::testConnectionClicked()
 {
-    ui->testConnIcon->setPixmap(testDatabase() ? ICONS.TEST_CONN_OK : ICONS.TEST_CONN_ERROR);
+    QString errorMsg;
+    bool ok = testDatabase(errorMsg);
+    ui->testConnIcon->setPixmap(ok ? ICONS.TEST_CONN_OK : ICONS.TEST_CONN_ERROR);
+    connIconTooltip->setToolTip(ok ? QString() : errorMsg);
     ui->testConnIcon->setVisible(true);
+    if (!ok)
+    {
+        QString path = getPath();
+        if (!path.isEmpty())
+            notifyWarn(QString("%1: %2").arg(getPath(), errorMsg));
+        else
+            notifyWarn(errorMsg);
+    }
 }
 
 void DbDialog::dbTypeChanged(int index)

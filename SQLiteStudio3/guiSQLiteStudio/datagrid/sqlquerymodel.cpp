@@ -9,12 +9,12 @@
 #include "parser/ast/sqlitecreatetable.h"
 #include "uiconfig.h"
 #include "datagrid/sqlqueryview.h"
-#include "datagrid/sqlqueryrownummodel.h"
 #include "services/dbmanager.h"
 #include "querygenerator.h"
 #include "parser/lexer.h"
 #include "common/compatibility.h"
 #include "mainwindow.h"
+#include "iconmanager.h"
 #include <QHeaderView>
 #include <QDebug>
 #include <QApplication>
@@ -411,7 +411,7 @@ void SqlQueryModel::refreshGeneratedColumns(const QList<SqlQueryItem*>& items)
     for (auto resultIt = resultValues.begin(); resultIt != resultValues.end(); resultIt++)
     {
         SqlQueryItem* item = resultIt.key();
-        item->setValue(resultIt.value(), false, true);
+        item->setValue(resultIt.value(), true);
         item->setTextAlignment(findValueAlignment(resultIt.value(), item->getColumn()));
     }
 }
@@ -1088,16 +1088,8 @@ void SqlQueryModel::updateItem(SqlQueryItem* item, const QVariant& value, int co
 void SqlQueryModel::updateItem(SqlQueryItem* item, const QVariant& value, int columnIndex, const RowId& rowId, Qt::Alignment alignment)
 {
     SqlQueryModelColumnPtr column = columns[columnIndex];
-
-    // This should be equal at most, unless we have UTF-8 string, than there might be more bytes.
-    // If less, than it's not limited.
-    // An exception is when this is a column resulting from expression (function, operator, etc), because cell size limiting is applied
-    // only for columns resulting directly from table column. Cells without rowId and table are not limited to avoid slow "loadFullData()" calls
-    // on cells when - for example - copying full value of a cell.
-    bool limited = value.toByteArray().size() >= cellDataLengthLimit && !rowId.isEmpty() && column->editionForbiddenReason.isEmpty();
-
     item->setJustInsertedWithOutRowId(false);
-    item->setValue(value, limited, true);
+    item->setValue(value, true);
     item->setColumn(column.data());
     item->setTextAlignment(alignment);
     item->setRowId(rowId);
@@ -1136,6 +1128,14 @@ RowId SqlQueryModel::getNewRowId(const RowId& currentRowId, const QList<SqlQuery
         for (SqlQueryItem* item : items)
         {
             col = item->getColumn();
+            QStringList tableRowIdColumns = tableToRowIdColumn[col->getAliasedTable()].values();
+            if (tableRowIdColumns.contains(col->column, Qt::CaseInsensitive))
+            {
+                RowId newRowId;
+                newRowId[col->column] = item->getValue();
+                return newRowId;
+            }
+
             if (isRowIdKeyword(col->column) || col->isRowIdPk())
             {
                 RowId newRowId;
@@ -1174,7 +1174,7 @@ QHash<QString, QVariantList> SqlQueryModel::toValuesGroupedByColumns(const QList
 {
     QHash<QString, QVariantList> values;
     for (SqlQueryItem* item : items)
-        values[item->getColumn()->displayName] << item->getFullValue();
+        values[item->getColumn()->displayName] << item->getValue();
 
     return values;
 }
@@ -1191,7 +1191,6 @@ bool SqlQueryModel::readColumns()
     tablesInUse.clear();
 
     // Reading column mapping for ROWID columns
-    int totalRowIdCols = 0;
     AliasedTable aliasedTable;
     DbAndTable dbAndTable;
     for (const QueryExecutor::ResultRowIdColumnPtr& resCol : queryExecutor->getRowIdResultColumns())
@@ -1209,7 +1208,6 @@ bool SqlQueryModel::readColumns()
         aliasedTable.setTable(resCol->table);
         aliasedTable.setTableAlias(resCol->tableAlias);
         tableToRowIdColumn[aliasedTable] = resCol->queryExecutorAliasToColumn;
-        totalRowIdCols += resCol->queryExecutorAliasToColumn.size();
     }
 
     // Reading column details (datatype, constraints)
@@ -1498,28 +1496,42 @@ void SqlQueryModel::changeSorting(int logicalIndex, Qt::SortOrder order)
     if (!reloadAvailable)
         return;
 
+    QueryExecutor::SortList sortList = QueryExecutor::SortList();
+    if (logicalIndex > -1)
+        sortList = {QueryExecutor::Sort(order, logicalIndex)};
+
     queryExecutor->setSkipRowCounting(true);
-    queryExecutor->setSortOrder({QueryExecutor::Sort(order, logicalIndex)});
+    queryExecutor->setSortOrder(sortList);
     reloadInternal();
 }
 
 void SqlQueryModel::changeSorting(int logicalIndex)
 {
     Qt::SortOrder newOrder = Qt::AscendingOrder;
-    if (sortOrder.size() == 1)
+    if (sortOrder.size() != 1)
     {
-        switch (sortOrder.first().order)
-        {
-            case QueryExecutor::Sort::ASC:
-                newOrder = Qt::DescendingOrder;
-                break;
-            case QueryExecutor::Sort::DESC:
-                newOrder = Qt::AscendingOrder;
-                break;
-            case QueryExecutor::Sort::NONE:
-                newOrder = Qt::AscendingOrder;
-                break;
-        }
+        changeSorting(logicalIndex, newOrder);
+        return;
+    }
+
+    QueryExecutor::Sort singleOrder = sortOrder.first();
+    if (singleOrder.column != logicalIndex)
+    {
+        changeSorting(logicalIndex, newOrder);
+        return;
+    }
+
+    switch (singleOrder.order)
+    {
+        case QueryExecutor::Sort::ASC:
+            newOrder = Qt::DescendingOrder;
+            break;
+        case QueryExecutor::Sort::DESC:
+            logicalIndex = -1;
+            break;
+        case QueryExecutor::Sort::NONE:
+            newOrder = Qt::AscendingOrder;
+            break;
     }
     changeSorting(logicalIndex, newOrder);
 }
@@ -2019,6 +2031,12 @@ void SqlQueryModel::applyStringFilter(const QString& value)
     // For custom query this is not supported.
 }
 
+void SqlQueryModel::applyStrictFilter(const QString& value)
+{
+    UNUSED(value);
+    // For custom query this is not supported.
+}
+
 void SqlQueryModel::applyRegExpFilter(const QString& value)
 {
     UNUSED(value);
@@ -2026,6 +2044,12 @@ void SqlQueryModel::applyRegExpFilter(const QString& value)
 }
 
 void SqlQueryModel::applyStringFilter(const QStringList& values)
+{
+    UNUSED(values);
+    // For custom query this is not supported.
+}
+
+void SqlQueryModel::applyStrictFilter(const QStringList& values)
 {
     UNUSED(values);
     // For custom query this is not supported.
@@ -2092,56 +2116,6 @@ bool SqlQueryModel::isExecutionInProgress() const
     return queryExecutor->isExecutionInProgress();
 }
 
-void SqlQueryModel::loadFullDataForEntireRow(int row)
-{
-    int colCnt = columns.size();
-    SqlQueryItem *item = nullptr;
-    for (int col = 0; col < colCnt; col++)
-    {
-        item = itemFromIndex(row, col);
-        if (!item)
-            continue;
-
-        if (!item->isLimitedValue())
-            continue;
-
-        item->loadFullData();
-    }
-}
-
-void SqlQueryModel::loadFullDataForEntireColumn(int column)
-{
-    int rowCnt = rowCount();
-    SqlQueryItem *item = nullptr;
-    for (int row = 0; row < rowCnt; row++)
-    {
-        item = itemFromIndex(row, column);
-        if (!item)
-            continue;
-
-        if (!item->isLimitedValue())
-            continue;
-
-        item->loadFullData();
-    }
-}
-
-bool SqlQueryModel::doesColumnHaveLimitedValues(int column) const
-{
-    int rowCnt = rowCount();
-    SqlQueryItem *item = nullptr;
-    for (int row = 0; row < rowCnt; row++)
-    {
-        item = itemFromIndex(row, column);
-        if (!item)
-            continue;
-
-        if (item->isLimitedValue())
-            return true;
-    }
-    return false;
-}
-
 void SqlQueryModel::CommitUpdateQueryBuilder::clear()
 {
     database.clear();
@@ -2185,7 +2159,7 @@ QString SqlQueryModel::CommitUpdateQueryBuilder::build()
     int argIndex = 0;
     QString arg;
     QStringList assignments;
-    for (const QString& col : columns)
+    for (QString& col : columns)
     {
         arg = ":value_" + QString::number(argIndex++);
         assignmentArgs << arg;

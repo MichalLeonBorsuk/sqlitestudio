@@ -1,7 +1,8 @@
 env:
     TCL_VERSION: '8.6'
-    SQLITE_VERSION: '3350500'
-    SQLITE_RELEASE_YEAR: '2021'
+    SQLITE_VERSION: '3390400'
+    SQLITE_RELEASE_YEAR: '2022'
+    PYTHON_VERSION: '3.9'
     PORTABLE_DIR: ${{ github.workspace }}/output/portable/SQLiteStudio
 
 name: Unit tests
@@ -25,30 +26,36 @@ on:
 
 jobs:
     build:
-        runs-on: ubuntu-18.04
+        runs-on: ubuntu-22.04
 
         strategy:
             matrix:
-                QT_VERSION: ['5.12.10', '5.15.2']
+                QT_VERSION: ['5.15.2']
 
         steps:
-            - name: Cache Qt
-              id: cache-qt
-              uses: actions/cache@v1
+            - uses: actions/setup-python@v4
               with:
-                path: ${{ github.workspace }}/../Qt
-                key: ${{ runner.os }}-Qt-${{ matrix.QT_VERSION }}-Linux-Cache
-
+                python-version: ${{ env.PYTHON_VERSION }}
+                architecture: 'x64'
+              
+            - name: Qt installation dir
+              id: qt-installation-dir
+              run: echo "DIR=$(readlink -f ${{ github.workspace }}/..)" >> $GITHUB_OUTPUT
+              
             - name: Install Qt
-              uses: jurplel/install-qt-action@v2
+              uses: jurplel/install-qt-action@v3
               with:
-                cached: ${{ steps.cache-qt.outputs.cache-hit }}
+                cache: true
                 version: ${{ matrix.QT_VERSION }}
                 host: 'linux'
-                dir: '${{ github.workspace }}/..'
+                dir: '${{ steps.qt-installation-dir.DIR }}'
+                aqtversion: '==3.0.*'
+                py7zrversion: '==0.20.*'
+                setup-python: 'false'
+                extra: '--external 7z'
 
             - name: Clone repo
-              uses: actions/checkout@v2
+              uses: actions/checkout@v3
               with:
                 ref: ${{ env.GITHUB_REF }}
 
@@ -95,7 +102,7 @@ jobs:
             - name: Compile Plugins
               working-directory: output/build/Plugins
               run: |
-                qmake CONFIG+=portable CONFIG+=debug DEFINES+=tests "INCLUDEPATH+=$pythonLocation/include/python3.9" "LIBS += -L$pythonLocation/lib" ../../../Plugins
+                qmake CONFIG+=portable CONFIG+=debug DEFINES+=tests "INCLUDEPATH+=$pythonLocation/include/python$PYTHON_VERSION" "LIBS += -L$pythonLocation/lib" ../../../Plugins
                 make -j 1
 
             - name: Run tests

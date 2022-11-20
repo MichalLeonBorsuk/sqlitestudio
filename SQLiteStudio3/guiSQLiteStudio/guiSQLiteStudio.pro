@@ -6,7 +6,7 @@
 
 QT       += core gui uitools widgets xml svg
 
-include($$PWD/../dirs.pri)
+include($$PWD/../common.pri)
 include($$PWD/../utils.pri)
 
 OBJECTS_DIR = $$OBJECTS_DIR/guiSQLiteStudio
@@ -26,17 +26,17 @@ portable: {
 TARGET = guiSQLiteStudio
 TEMPLATE = lib
 
-CONFIG += c++17 lrelease embed_translations
+CONFIG += c++17
 QMAKE_CXXFLAGS += -pedantic
-QM_FILES_RESOURCE_PREFIX = /msg/translations
 
 DEFINES += GUISQLITESTUDIO_LIBRARY
 
-TRANSLATIONS += $$files(translations/*.ts)
-
 SOURCES +=\
     common/dbcombobox.cpp \
+    common/immediatetooltip.cpp \
+    common/mouseshortcut.cpp \
     constraints/columngeneratedpanel.cpp \
+    datagrid/fkcombobox.cpp \
     extendedpalette.cpp \
         mainwindow.cpp \
     iconmanager.cpp \
@@ -45,6 +45,7 @@ SOURCES +=\
     dbtree/dbtree.cpp \
     dbtree/dbtreeview.cpp \
     actionentry.cpp \
+    multieditor/multieditorfk.cpp \
     style.cpp \
     uiutils.cpp \
     dbtree/dbtreeitemdelegate.cpp \
@@ -89,6 +90,8 @@ SOURCES +=\
     completer/completerview.cpp \
     dialogs/searchtextdialog.cpp \
     searchtextlocator.cpp \
+    windows/codesnippeteditor.cpp \
+    windows/codesnippeteditormodel.cpp \
     windows/tablewindow.cpp \
     windows/editorwindow.cpp \
     datagrid/sqltablemodel.cpp \
@@ -190,7 +193,10 @@ SOURCES +=\
 
 HEADERS  += mainwindow.h \
     common/dbcombobox.h \
+    common/immediatetooltip.h \
+    common/mouseshortcut.h \
     constraints/columngeneratedpanel.h \
+    datagrid/fkcombobox.h \
     extendedpalette.h \
     iconmanager.h \
     dbtree/dbtreemodel.h \
@@ -198,6 +204,7 @@ HEADERS  += mainwindow.h \
     dbtree/dbtree.h \
     dbtree/dbtreeview.h \
     actionentry.h \
+    multieditor/multieditorfk.h \
     style.h \
     uiutils.h \
     dbtree/dbtreeitemdelegate.h \
@@ -243,6 +250,8 @@ HEADERS  += mainwindow.h \
     completer/completerview.h \
     dialogs/searchtextdialog.h \
     searchtextlocator.h \
+    windows/codesnippeteditor.h \
+    windows/codesnippeteditormodel.h \
     windows/tablewindow.h \
     windows/editorwindow.h \
     datagrid/sqltablemodel.h \
@@ -353,6 +362,7 @@ FORMS    += mainwindow.ui \
     statusfield.ui \
     completer/completerwindow.ui \
     dialogs/searchtextdialog.ui \
+    windows/codesnippeteditor.ui \
     windows/tablewindow.ui \
     windows/editorwindow.ui \
     dialogs/columndialog.ui \

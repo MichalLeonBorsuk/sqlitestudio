@@ -86,6 +86,7 @@ void CsvImport::defineCsvFormat()
     csvFormat.rowSeparators = QStringList({"\r\n", "\n", "\r"});
     csvFormat.multipleRowSeparators = true;
     csvFormat.strictRowSeparator = true;
+    csvFormat.quotationMark = cfg.CsvImport.QuotationMark.get();
 
     switch (cfg.CsvImport.Separator.get())
     {
@@ -192,11 +193,11 @@ QString CsvImport::getFileFilter() const
 
 bool CsvImport::init()
 {
-    Q_INIT_RESOURCE(csvimport);
+    SQLS_INIT_RESOURCE(csvimport);
     return GenericPlugin::init();
 }
 
 void CsvImport::deinit()
 {
-    Q_CLEANUP_RESOURCE(csvimport);
+    SQLS_CLEANUP_RESOURCE(csvimport);
 }

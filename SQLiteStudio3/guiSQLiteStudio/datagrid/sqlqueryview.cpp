@@ -7,7 +7,6 @@
 #include "iconmanager.h"
 #include "common/unused.h"
 #include "common/extaction.h"
-#include "multieditor/multieditor.h"
 #include "multieditor/multieditordialog.h"
 #include "uiconfig.h"
 #include "dialogs/sortdialog.h"
@@ -15,8 +14,7 @@
 #include "windows/editorwindow.h"
 #include "mainwindow.h"
 #include "common/utils_sql.h"
-#include "querygenerator.h"
-#include "services/codeformatter.h"
+#include "common/mouseshortcut.h"
 #include <QPushButton>
 #include <QProgressBar>
 #include <QGridLayout>
@@ -61,13 +59,17 @@ void SqlQueryView::init()
     connect(this, &QWidget::customContextMenuRequested, this, &SqlQueryView::customContextMenuRequested);
     connect(CFG_UI.Fonts.DataView, SIGNAL(changed(QVariant)), this, SLOT(updateFont()));
     connect(this, SIGNAL(activated(QModelIndex)), this, SLOT(itemActivated(QModelIndex)));
-    connect(horizontalHeader(), &QHeaderView::sectionResized, [this](int section, int, int newSize)
+    connect(horizontalHeader(), &QHeaderView::sectionResized, this, [this](int section, int, int newSize)
     {
         if (ignoreColumnWidthChanges)
             return;
 
         getModel()->setDesiredColumnWidth(section, newSize);
     });
+    connect(verticalHeader(), SIGNAL(sectionDoubleClicked(int)), this, SLOT(adjustRowToContents(int)));
+    MouseShortcut::forWheel(Qt::ControlModifier,
+                            this, SLOT(fontSizeChangeRequested(int)),
+                            viewport());
 
     horizontalHeader()->setSortIndicatorShown(false);
     horizontalHeader()->setSectionsClickable(true);
@@ -98,6 +100,7 @@ void SqlQueryView::createActions()
     createAction(ROLLBACK, ICONS.ROLLBACK, tr("Rollback"), this, SLOT(rollback()), this);
     createAction(SELECTIVE_COMMIT, ICONS.COMMIT, tr("Commit selected cells"), this, SLOT(selectiveCommit()), this);
     createAction(SELECTIVE_ROLLBACK, ICONS.ROLLBACK, tr("Rollback selected cells"), this, SLOT(selectiveRollback()), this);
+    createAction(EDIT_CURRENT, tr("Edit current cell inline"), this, SLOT(editCurrent()), this);
     createAction(GENERATE_SELECT, "SELECT", this, SLOT(generateSelect()), this);
     createAction(GENERATE_INSERT, "INSERT", this, SLOT(generateInsert()), this);
     createAction(GENERATE_UPDATE, "UPDATE", this, SLOT(generateUpdate()), this);
@@ -107,15 +110,19 @@ void SqlQueryView::createActions()
     createAction(INSERT_ROW, ICONS.INSERT_ROW, tr("Insert row"), this, SIGNAL(requestForRowInsert()), this);
     createAction(INSERT_MULTIPLE_ROWS, ICONS.INSERT_ROWS, tr("Insert multiple rows"), this, SIGNAL(requestForMultipleRowInsert()), this);
     createAction(DELETE_ROW, ICONS.DELETE_ROW, tr("Delete selected row"), this, SIGNAL(requestForRowDelete()), this);
-    createAction(LOAD_FULL_VALUES, ICONS.LOAD_FULL_VALUES, tr("Load full values"), this, SLOT(loadFullValuesForColumn()), this);
-
+    createAction(ADJUST_ROWS_SIZE, tr("Adjust height of rows"), this, SLOT(toggleRowsHeightAdjustment(bool)), this);
+    actionMap[ADJUST_ROWS_SIZE]->setCheckable(true);
+    actionMap[ADJUST_ROWS_SIZE]->setChecked(false);
     actionMap[RESET_SORTING]->setEnabled(false);
+    createAction(INCR_FONT_SIZE, tr("Increase font size", "data view"), this, SLOT(incrFontSize()), this);
+    createAction(DECR_FONT_SIZE, tr("Decrease font size", "data view"), this, SLOT(decrFontSize()), this);
+    createAction(INVERT_SELECTION, ICONS.SELECTION_INVERT, tr("Invert selection", "data view"), this, SLOT(invertSelection()), this);
 }
 
 void SqlQueryView::setupDefShortcuts()
 {
     setShortcutContext({ROLLBACK, SET_NULL, ERASE, OPEN_VALUE_EDITOR, COMMIT, COPY, COPY_AS,
-                       PASTE, PASTE_AS}, Qt::WidgetWithChildrenShortcut);
+                       PASTE, PASTE_AS, ADJUST_ROWS_SIZE, INCR_FONT_SIZE, DECR_FONT_SIZE}, Qt::WidgetWithChildrenShortcut);
 
     BIND_SHORTCUTS(SqlQueryView, Action);
 }
@@ -186,7 +193,6 @@ void SqlQueryView::setupActionsForMenu(SqlQueryItem* currentItem, const QList<Sq
             generateQueryMenu->addAction(actionMap[GENERATE_DELETE]);
         }
 
-
         contextMenu->addSeparator();
         contextMenu->addAction(actionMap[COPY]);
         contextMenu->addAction(actionMap[COPY_WITH_HEADER]);
@@ -194,10 +200,13 @@ void SqlQueryView::setupActionsForMenu(SqlQueryItem* currentItem, const QList<Sq
         contextMenu->addAction(actionMap[PASTE]);
         //contextMenu->addAction(actionMap[PASTE_AS]); // TODO uncomment when implemented
     }
+    contextMenu->addSeparator();
+    contextMenu->addAction(actionMap[INVERT_SELECTION]);
+    contextMenu->addAction(actionMap[ADJUST_ROWS_SIZE]);
     if (additionalActions.size() > 0)
     {
         contextMenu->addSeparator();
-        for (QAction* action : additionalActions)
+        for (QAction*& action : additionalActions)
             contextMenu->addAction(action);
     }
 }
@@ -209,8 +218,6 @@ void SqlQueryView::setupHeaderMenu()
     headerContextMenu = new QMenu(horizontalHeader());
     headerContextMenu->addAction(actionMap[SORT_DIALOG]);
     headerContextMenu->addAction(actionMap[RESET_SORTING]);
-    headerContextMenu->addSeparator();
-    headerContextMenu->addAction(actionMap[LOAD_FULL_VALUES]);
 }
 
 QList<SqlQueryItem*> SqlQueryView::getSelectedItems()
@@ -251,8 +258,13 @@ void SqlQueryView::setModel(QAbstractItemModel* model)
     QTableView::setModel(model);
     SqlQueryModel* m = getModel();
     connect(widgetCover, SIGNAL(cancelClicked()), m, SLOT(interrupt()));
-    connect(getModel(), &SqlQueryModel::commitStatusChanged, this, &SqlQueryView::updateCommitRollbackActions);
-    connect(getModel(), &SqlQueryModel::sortingUpdated, this, &SqlQueryView::sortingUpdated);
+    connect(m, &SqlQueryModel::commitStatusChanged, this, &SqlQueryView::updateCommitRollbackActions);
+    connect(m, &SqlQueryModel::sortingUpdated, this, &SqlQueryView::sortingUpdated);
+    connect(m, &SqlQueryModel::executionSuccessful, this, [this]()
+    {
+        if (actionMap[ADJUST_ROWS_SIZE]->isChecked())
+            verticalHeader()->resizeSections(QHeaderView::ResizeToContents);
+    });
 }
 
 SqlQueryItem* SqlQueryView::itemAt(const QPoint& pos)
@@ -319,9 +331,67 @@ void SqlQueryView::generateDelete()
     MAINWINDOW->openSqlEditor(getModel()->getDb(), sql);
 }
 
-void SqlQueryView::loadFullValuesForColumn()
+void SqlQueryView::editCurrent()
 {
-    getModel()->loadFullDataForEntireColumn(headerContextMenuSection);
+    QModelIndex idx = getCurrentIndex();
+    if (idx.isValid())
+        edit(idx);
+}
+
+void SqlQueryView::toggleRowsHeightAdjustment(bool enabled)
+{
+    QHeaderView* hdr = verticalHeader();
+    if (enabled)
+    {
+        hdr->resizeSections(QHeaderView::ResizeToContents);
+    }
+    else
+    {
+        hdr->setSectionResizeMode(QHeaderView::Interactive);
+        hdr->resizeSections(QHeaderView::Interactive);
+        int height = hdr->defaultSectionSize();
+        int rows = getModel()->rowCount();
+        for (int row = 0; row < rows; row++)
+            hdr->resizeSection(row, height);
+    }
+}
+
+void SqlQueryView::adjustRowToContents(int section)
+{
+    verticalHeader()->setSectionResizeMode(section, QHeaderView::ResizeToContents);
+}
+
+void SqlQueryView::fontSizeChangeRequested(int delta)
+{
+    changeFontSize(delta >= 0 ? 1 : -1);
+}
+
+void SqlQueryView::incrFontSize()
+{
+    changeFontSize(1);
+}
+
+void SqlQueryView::decrFontSize()
+{
+    changeFontSize(-1);
+}
+
+void SqlQueryView::invertSelection()
+{
+    SqlQueryModel* model = getModel();
+    int rows = model->rowCount();
+    int cols = model->columnCount();
+    QItemSelectionModel* selection = selectionModel();
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++)
+            selection->select(model->index(r, c), QItemSelectionModel::Toggle);
+
+    if (!selection->isSelected(currentIndex()))
+    {
+        QModelIndexList idxList = selection->selectedIndexes();
+        if (!idxList.isEmpty())
+            selection->setCurrentIndex(selection->selectedIndexes().first(), QItemSelectionModel::NoUpdate);
+    }
 }
 
 bool SqlQueryView::editInEditorIfNecessary(SqlQueryItem* item)
@@ -362,7 +432,7 @@ void SqlQueryView::paste(const QList<QList<QVariant> >& data)
             if (!validatePasting(warnedColumns, warnedRowDeletion, item))
                 continue;
 
-            item->setValue(theValue, false, false);
+            item->setValue(theValue, false);
         }
 
         return;
@@ -402,7 +472,7 @@ void SqlQueryView::paste(const QList<QList<QVariant> >& data)
             if (!validatePasting(warnedColumns, warnedRowDeletion, item))
                 continue;
 
-            item->setValue(cell, false, false);
+            item->setValue(cell, false);
         }
 
         // Go to next row, first column
@@ -527,7 +597,7 @@ void SqlQueryView::copy(bool withHeader)
     {
         for (SqlQueryItem* item : itemsInRows)
         {
-            itemValue = item->getFullValue();
+            itemValue = item->getValue();
             if (itemValue.userType() == QVariant::Double)
                 cells << doubleToString(itemValue);
             else
@@ -559,6 +629,13 @@ void SqlQueryView::copy(bool withHeader)
     qApp->clipboard()->setMimeData(mimeData);
 }
 
+void SqlQueryView::changeFontSize(int factor)
+{
+    auto f = CFG_UI.Fonts.DataView.get();
+    f.setPointSize(f.pointSize() + factor);
+    CFG_UI.Fonts.DataView.set(f);
+}
+
 bool SqlQueryView::getSimpleBrowserMode() const
 {
     return simpleBrowserMode;
@@ -583,20 +660,6 @@ void SqlQueryView::scrollContentsBy(int dx, int dy)
 {
     QTableView::scrollContentsBy(dx, dy);
     emit scrolledBy(dx, dy);
-}
-
-void SqlQueryView::mouseMoveEvent(QMouseEvent* event)
-{
-    QAbstractItemView::mouseMoveEvent(event);
-
-    QModelIndex idx = indexAt(QPoint(event->x(), event->y()));
-    if (idx != indexUnderCursor)
-    {
-        if (indexUnderCursor.isValid())
-            itemDelegate->mouseLeftIndex(indexUnderCursor);
-
-        indexUnderCursor = idx;
-    }
 }
 
 void SqlQueryView::updateCommitRollbackActions(bool enabled)
@@ -628,11 +691,6 @@ void SqlQueryView::headerContextMenuRequested(const QPoint& pos)
 {
     if (simpleBrowserMode)
         return;
-
-    headerContextMenuSection = horizontalHeader()->visualIndexAt(pos.x());
-
-    bool hasLimitedValues = getModel()->doesColumnHaveLimitedValues(headerContextMenuSection);
-    actionMap[LOAD_FULL_VALUES]->setEnabled(hasLimitedValues);
 
     headerContextMenu->popup(horizontalHeader()->mapToGlobal(pos));
 }
@@ -727,6 +785,8 @@ void SqlQueryView::paste()
     QList<QStringList> deserializedRows = TsvSerializer::deserialize(mimeData->text());
     bool trimOnPaste = false;
     bool trimOnPasteAsked = false;
+    bool pasteAsNull = false;
+    bool pasteAsNullAsked = false;
 
     QList<QVariant> dataRow;
     QList<QList<QVariant>> dataToPaste;
@@ -740,14 +800,30 @@ void SqlQueryView::paste()
             if ((cell.at(0).isSpace() || cell.at(cell.size() - 1).isSpace()) && !trimOnPasteAsked)
 #endif
             {
-                QMessageBox::StandardButton choice;
-                choice = QMessageBox::question(this, tr("Trim pasted text?"),
+                QMessageBox::StandardButton trimChoice;
+                trimChoice = QMessageBox::question(this, tr("Trim pasted text?"),
                                                tr("The pasted text contains leading or trailing white space. Trim it automatically?"));
                 trimOnPasteAsked = true;
-                trimOnPaste = (choice == QMessageBox::Yes);
+                trimOnPaste = (trimChoice == QMessageBox::Yes);
             }
 
-            dataRow << (trimOnPaste ? cell.trimmed() : cell);
+            if (cell=="NULL" && !pasteAsNullAsked)
+            {
+                QMessageBox::StandardButton nullChoice;
+                nullChoice = QMessageBox::question(this, tr("Paste \"NULL\" as null value?"),
+                                               tr("The pasted text contains \"NULL\" literals. Do you want to consider them as NULL values?"));
+                pasteAsNullAsked = true;
+                pasteAsNull = (nullChoice == QMessageBox::Yes);
+            }
+
+            if (cell=="NULL" && pasteAsNull)
+            {
+                dataRow << QVariant();
+            }
+            else
+            {
+                dataRow << (trimOnPaste ? cell.trimmed() : cell);
+            }
         }
 
         dataToPaste << dataRow;
@@ -776,7 +852,7 @@ void SqlQueryView::setNull()
         if (selItem->getColumn()->editionForbiddenReason.size() > 0)
             continue;
 
-        selItem->setValue(QVariant(QString()), false, false);
+        selItem->setValue(QVariant(QString()), false);
     }
 }
 
@@ -789,7 +865,7 @@ void SqlQueryView::erase()
         if (selItem->getColumn()->editionForbiddenReason.size() > 0)
             continue;
 
-        selItem->setValue("", false, false);
+        selItem->setValue("", false);
     }
 }
 
@@ -836,11 +912,17 @@ void SqlQueryView::openValueEditor(SqlQueryItem* item)
         return;
     }
 
+    SqlQueryModelColumn* column = item->getColumn();
+
     MultiEditorDialog editor(this);
+    if (!column->getFkConstraints().isEmpty())
+        editor.enableFk(getModel()->getDb(), column);
+
+    editor.setDataType(column->dataType);
     editor.setWindowTitle(tr("Edit value"));
-    editor.setDataType(item->getColumn()->dataType);
-    editor.setValue(item->getFullValue());
-    editor.setReadOnly(!item->getColumn()->canEdit());
+    editor.setValue(item->getValue());
+    editor.setReadOnly(!column->canEdit());
+
     if (editor.exec() == QDialog::Rejected)
         return;
 

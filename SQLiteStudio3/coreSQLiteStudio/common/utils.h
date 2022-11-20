@@ -263,6 +263,7 @@ API_EXPORT QTextCodec* defaultCodec();
 API_EXPORT QTextCodec* codecForName(const QString& name);
 API_EXPORT QStringList splitByLines(const QString& str);
 API_EXPORT QString joinLines(const QStringList& lines);
+API_EXPORT QStringList sharedLibFileFilters();
 API_EXPORT int sum(const QList<int>& integers);
 API_EXPORT QString getOsString();
 API_EXPORT bool validateEmail(const QString& email);
@@ -359,6 +360,8 @@ API_EXPORT QByteArray serializeToBytes(const QVariant& value);
 API_EXPORT QVariant deserializeFromBytes(const QByteArray& bytes);
 
 API_EXPORT QString readFileContents(const QString& path, QString* err);
+
+API_EXPORT QString toNativePath(const QString& path);
 
 Q_DECLARE_METATYPE(QList<int>)
 

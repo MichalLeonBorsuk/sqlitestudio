@@ -1,37 +1,48 @@
 env:
     QT_VERSION: '5.15.2'
     TCL_VERSION: '8.6'
-    SQLITE_VERSION: '3350500'
-    SQLITE_RELEASE_YEAR: '2021'
+    SQLITE_VERSION: '3390400'
+    SQLITE_RELEASE_YEAR: '2022'
+    PYTHON_VERSION: '3.9'
     PORTABLE_DIR: ${{ github.workspace }}/output/portable/SQLiteStudio
     INSTALLBUILDER_DIR: ../ib
-    INSTALLBUILDER_URL: https://installbuilder.com/installbuilder-enterprise-21.3.0-linux-x64-installer.run
+    INSTALLBUILDER_URL: https://installbuilder.com/installbuilder-enterprise-22.6.0-linux-x64-installer.run
 
 name: Linux release build
 
 on:
+    workflow_dispatch:
+        inputs:
+    schedule:
+        - cron: '30 3 * * 1' # run at 3:30 AM UTC every Monday
     repository_dispatch:
         types: [lin_release]
 
 jobs:
     build:
-        runs-on: ubuntu-20.04
+        runs-on: ubuntu-22.04
 
         steps:
-            - name: Cache Qt
-              id: cache-qt
-              uses: actions/cache@v1
+            - uses: actions/setup-python@v4
               with:
-                path: ${{ github.workspace }}/../Qt
-                key: ${{ runner.os }}-Qt-${{ env.QT_VERSION }}-Linux-Cache
-                
+                python-version: ${{ env.PYTHON_VERSION }}
+                architecture: 'x64'
+              
+            - name: Qt installation dir
+              id: qt-installation-dir
+              run: echo "DIR=$(readlink -f ${{ github.workspace }}/..)" >> $GITHUB_OUTPUT
+              
             - name: Install Qt
-              uses: jurplel/install-qt-action@v2
+              uses: jurplel/install-qt-action@v3
               with:
-                cached: ${{ steps.cache-qt.outputs.cache-hit }}
+                cache: true
                 version: ${{ env.QT_VERSION }}
                 host: 'linux'
-                dir: '${{ github.workspace }}/..'
+                dir: '${{ steps.qt-installation-dir.DIR }}'
+                aqtversion: '==3.0.*'
+                py7zrversion: '==0.20.*'
+                setup-python: 'false'
+                extra: '--external 7z'
                 
             - name: Install the InstalBuilder
               shell: bash
@@ -44,9 +55,15 @@ jobs:
                 echo "INSTALLER_BIN_PREFIX=${{ env.PORTABLE_DIR }}" >> $GITHUB_ENV
 
             - name: Clone repo
-              uses: actions/checkout@v2
+              uses: actions/checkout@v3
               with:
                 ref: ${{ github.event.client_payload.branch }}
+
+            - name: Pre-download SQLite vanilla sourcecode
+              shell: bash
+              run: |
+                cd ..
+                curl -L http://sqlite.org/$SQLITE_RELEASE_YEAR/sqlite-src-$SQLITE_VERSION.zip --output sqlite-src-$SQLITE_VERSION.zip
 
             - name: Install SQLite3
               run: |
@@ -71,12 +88,30 @@ jobs:
                 sudo cp -P libsqlite3.so* /usr/local/lib/
                 sudo cp *.h /usr/local/include/
 
+            - name: Compile additional SQLite3 extensions
+              shell: bash
+              run: |
+                cd ..
+                mkdir ext
+                unzip sqlite-src-$SQLITE_VERSION.zip
+                cd sqlite-src-$SQLITE_VERSION/ext
+                FLAGS="-ldl -Os -fpic -shared -Imisc -I/usr/local/include -L/usr/local/lib -lsqlite3"
+                for f in compress; do
+                    echo "gcc misc/$f.c $FLAGS -lz -o ../../ext/$f.so"
+                    gcc misc/$f.c $FLAGS -lz -o ../../ext/$f.so
+                done
+                for f in csv decimal eval ieee754 percentile rot13 series uint uuid zorder; do
+                    echo "gcc misc/$f.c $FLAGS -o ../../ext/$f.so"
+                    gcc misc/$f.c $FLAGS -o ../../ext/$f.so
+                done
+                ls -l ../../ext/
+
             - name: Install Tcl
               run: sudo apt-get install -qq libtcl$TCL_VERSION tcl$TCL_VERSION-dev
               
             - name: Install other tools/dependencies
               run: |
-                sudo apt install libreadline-dev libncurses5-dev patchelf
+                sudo apt install libreadline-dev libncurses5-dev patchelf chrpath
                 echo "${{ github.workspace }}/../Qt/${{ env.QT_VERSION }}/gcc_64/bin" >> $GITHUB_PATH
  
             - name: Prepare output dir
@@ -91,8 +126,13 @@ jobs:
             - name: Compile Plugins
               working-directory: output/build/Plugins
               run: |
-                qmake CONFIG+=portable "INCLUDEPATH+=$pythonLocation/include/python3.9" "LIBS += -L$pythonLocation/lib" ../../../Plugins
+                qmake CONFIG+=portable "INCLUDEPATH+=$pythonLocation/include/python$PYTHON_VERSION" "LIBS += -L$pythonLocation/lib" ../../../Plugins
                 make -j 1
+
+            - name: Copy SQLite extensions to output dir
+              shell: bash
+              run: |
+                cp -R ../ext output/SQLiteStudio/extensions
               
             - name: Prepare portable dir
               working-directory: output
@@ -103,6 +143,13 @@ jobs:
             - name: Copy SQLite3 to portable dir
               working-directory: ${{ env.PORTABLE_DIR }}
               run: cp -P /usr/local/lib/libsqlite3.so* lib/
+
+            - name: Copy libcrypto to portable dir
+              working-directory: ${{ env.PORTABLE_DIR }}
+              run: |
+                LIBCRYPTO=$(ldd plugins/libDbSqliteCipher.so | grep crypto | awk '{print $3}')
+                REAL_LIBCRYPTO=$(readlink -e $LIBCRYPTO)
+                cp -P $REAL_LIBCRYPTO lib/$(basename -- $LIBCRYPTO)
 
             - name: Copy Qt to portable dir
               working-directory: ${{ env.PORTABLE_DIR }}
@@ -125,7 +172,7 @@ jobs:
             - name: Copy Qt plugins to portable dir
               working-directory: ${{ env.PORTABLE_DIR }}
               run: |
-                mkdir platforms imageformats iconengines printsupport platformthemes
+                mkdir platforms imageformats iconengines printsupport platformthemes platforminputcontexts
                 cp -P ${{ env.Qt5_Dir }}/plugins/platforms/libqxcb.so platforms/libqxcb.so
                 cp -P ${{ env.Qt5_Dir }}/plugins/imageformats/libqgif.so imageformats/libqgif.so
                 cp -P ${{ env.Qt5_Dir }}/plugins/imageformats/libqicns.so imageformats/libqicns.so
@@ -137,6 +184,7 @@ jobs:
                 cp -P ${{ env.Qt5_Dir }}/plugins/iconengines/libqsvgicon.so iconengines/libqsvgicon.so
                 cp -P ${{ env.Qt5_Dir }}/plugins/printsupport/libcupsprintersupport.so printsupport/libcupsprintersupport.so
                 cp -P ${{ env.Qt5_Dir }}/plugins/platformthemes/libqgtk3.so platformthemes/libqgtk3.so
+                cp -P ${{ env.Qt5_Dir }}/plugins/platforminputcontexts/libcomposeplatforminputcontextplugin.so platforminputcontexts/libcomposeplatforminputcontextplugin.so
 
             - name: Fix dependency paths
               working-directory: ${{ env.PORTABLE_DIR }}
@@ -152,7 +200,9 @@ jobs:
 
             - name: Final preparations for packaging
               run: |
-                cp SQLiteStudio3/guiSQLiteStudio/img/sqlitestudio_256.png "${{ env.PORTABLE_DIR }}"/appicon.png
+                mkdir "${{ env.PORTABLE_DIR }}"/assets
+                cp SQLiteStudio3/guiSQLiteStudio/img/sqlitestudio_256.png "${{ env.PORTABLE_DIR }}"/assets/appicon.png
+                cp SQLiteStudio3/guiSQLiteStudio/img/sqlitestudio.svg "${{ env.PORTABLE_DIR }}"/assets/appicon.svg
 
             - name: Final preparations for packaging
               working-directory: ${{ env.PORTABLE_DIR }}

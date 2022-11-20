@@ -1,5 +1,6 @@
 #include "sqlitestudio.h"
 #include "plugins/plugin.h"
+#include "services/codesnippetmanager.h"
 #include "services/pluginmanager.h"
 #include "common/utils.h"
 #include "common/utils_sql.h"
@@ -207,6 +208,16 @@ void SQLiteStudio::setExportManager(ExportManager* value)
     exportManager = value;
 }
 
+CodeSnippetManager* SQLiteStudio::getCodeSnippetManager() const
+{
+    return codeSnippetManager;
+}
+
+void SQLiteStudio::setCodeSnippetManager(CodeSnippetManager* newCodeSnippetManager)
+{
+    codeSnippetManager = newCodeSnippetManager;
+}
+
 int SQLiteStudio::getVersion() const
 {
     return sqlitestudioVersion;
@@ -305,7 +316,7 @@ void SQLiteStudio::init(const QStringList& cmdListArguments, bool guiAvailable)
 
     QThreadPool::globalInstance()->setMaxThreadCount(10);
 
-    Q_INIT_RESOURCE(coreSQLiteStudio);
+    SQLS_INIT_RESOURCE(coreSQLiteStudio);
 
     CfgLazyInitializer::init();
 
@@ -370,6 +381,7 @@ void SQLiteStudio::init(const QStringList& cmdListArguments, bool guiAvailable)
     updateManager = new UpdateManager();
 #endif
     extraLicenseManager = new ExtraLicenseManager();
+    codeSnippetManager = new CodeSnippetManager(config);
 
     extraLicenseManager->addLicense("SQLiteStudio license (GPL v3)", ":/docs/licenses/sqlitestudio_license.txt");
     extraLicenseManager->addLicense("Fugue icons", ":/docs/licenses/fugue_icons.txt");
@@ -392,31 +404,43 @@ void SQLiteStudio::initPlugins()
 
 void SQLiteStudio::cleanUp()
 {
-    emit aboutToQuit();
-    disconnect(pluginManager, SIGNAL(aboutToUnload(Plugin*,PluginType*)), this, SLOT(pluginToBeUnloaded(Plugin*,PluginType*)));
-    disconnect(pluginManager, SIGNAL(unloaded(QString,PluginType*)), this, SLOT(pluginUnloaded(QString,PluginType*)));
-    if (!immediateQuit)
-    {
-        if (pluginManager)
-            pluginManager->deinit();
+    if (finalCleanupDone)
+        return;
 
-        safe_delete(pluginManager); // PluginManager before DbManager, so Db objects are deleted while DbManager still exists
-#ifdef PORTABLE_CONFIG
-        safe_delete(updateManager);
-#endif
-        safe_delete(populateManager);
-        safe_delete(importManager);
-        safe_delete(exportManager);
-        safe_delete(functionManager);
-        safe_delete(extraLicenseManager);
-        safe_delete(dbManager);
-        safe_delete(config);
-        safe_delete(codeFormatter);
-        safe_delete(dbAttacherFactory);
-        safe_delete(env);
-        NotifyManager::destroy();
-    }
-    Q_CLEANUP_RESOURCE(coreSQLiteStudio);
+    finalCleanupDone = true;
+    emit aboutToQuit();
+    // Deleting all singletons contained in this object, alongside with plugin deinitialization & unloading
+    // causes QTranslator to crash randomly during shutdown, due to some issue in Qt itself, because it tries to refresh
+    // some internal translators state after the translator is uninstalled, but at the same time many message resources
+    // are being unloaded together with plugins and it somehow causes the crash (randomly).
+    // At the same time if hardly find any reason to execute proper deinitialization of all singletons, when the application stops.
+    // The session (UI) is saved anyway independently in the UI code.
+    // Explicit deletion of singletons does not really have any benefits.
+    // Leaving this code here for some time, just to understand it later if needed, but eventually it will be deleted.
+//    disconnect(pluginManager, SIGNAL(aboutToUnload(Plugin*,PluginType*)), this, SLOT(pluginToBeUnloaded(Plugin*,PluginType*)));
+//    disconnect(pluginManager, SIGNAL(unloaded(QString,PluginType*)), this, SLOT(pluginUnloaded(QString,PluginType*)));
+//    if (!immediateQuit)
+//    {
+//        if (pluginManager)
+//            pluginManager->deinit();
+
+//        safe_delete(pluginManager); // PluginManager before DbManager, so Db objects are deleted while DbManager still exists
+//#ifdef PORTABLE_CONFIG
+//        safe_delete(updateManager);
+//#endif
+//        safe_delete(populateManager);
+//        safe_delete(importManager);
+//        safe_delete(exportManager);
+//        safe_delete(functionManager);
+//        safe_delete(extraLicenseManager);
+//        safe_delete(dbManager);
+//        safe_delete(config);
+//        safe_delete(codeFormatter);
+//        safe_delete(dbAttacherFactory);
+//        safe_delete(env);
+//        NotifyManager::destroy();
+//    }
+//    SQLS_CLEANUP_RESOURCE(coreSQLiteStudio);
 }
 
 void SQLiteStudio::updateCodeFormatter()

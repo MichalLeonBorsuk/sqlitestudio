@@ -26,8 +26,7 @@ CFG_KEY_LIST(DataView, QObject::tr("Data view (both grid and form)"),
 
 class GUI_API_EXPORT DataView : public QTabWidget, public ExtActionContainer
 {
-        Q_OBJECT
-        Q_ENUMS(Action)
+    Q_OBJECT
 
     public:
         enum Action
@@ -48,6 +47,7 @@ class GUI_API_EXPORT DataView : public QTabWidget, public ExtActionContainer
             FILTER_STRING,
             FILTER_SQL,
             FILTER_REGEXP,
+            FILTER_EXACT,
             FILTER_PER_COLUMN,
             GRID_TOTAL_ROWS,
             SELECTIVE_COMMIT,
@@ -59,6 +59,7 @@ class GUI_API_EXPORT DataView : public QTabWidget, public ExtActionContainer
             FORM_TOTAL_ROWS,
             FORM_CURRENT_ROW
         };
+        Q_ENUM(Action)
 
         enum class ActionGroup
         {
@@ -113,7 +114,8 @@ class GUI_API_EXPORT DataView : public QTabWidget, public ExtActionContainer
         {
             STRING,
             SQL,
-            REGEXP
+            REGEXP,
+            EXACT
         };
 
         static void createStaticActions();
@@ -203,7 +205,9 @@ class GUI_API_EXPORT DataView : public QTabWidget, public ExtActionContainer
         void prevRow();
         void nextRow();
         void lastRow();
+        void rowsHeaderClicked(int rowIdx);
         void columnsHeaderClicked(int columnIdx);
+        void columnsHeaderDoubleClicked(int columnIdx);
         void tabChanged(int newIndex);
         void updateFormNavigationState();
         void updateFormCommitRollbackActions();
