@@ -1,6 +1,7 @@
 #ifndef SQLEDITOR_H
 #define SQLEDITOR_H
 
+#include "common/strhash.h"
 #include "guiSQLiteStudio_global.h"
 #include "common/extactioncontainer.h"
 #include "sqlitesyntaxhighlighter.h"
@@ -130,8 +131,9 @@ class GUI_API_EXPORT SqlEditor : public QPlainTextEdit, public ExtActionContaine
         void mouseMoveEvent(QMouseEvent* e);
         void mousePressEvent(QMouseEvent* e);
         void resizeEvent(QResizeEvent *e);
-        void changeEvent(QEvent*e);
+        void changeEvent(QEvent* e);
         void showEvent(QShowEvent* event);
+        void dropEvent(QDropEvent* e);
 
     private:
         class LineNumberArea : public QWidget
@@ -226,8 +228,7 @@ class GUI_API_EXPORT SqlEditor : public QPlainTextEdit, public ExtActionContaine
         bool deletionKeyPressed = false;
         LazyTrigger* queryParserTrigger = nullptr;
         Parser* queryParser = nullptr;
-        QHash<QString,QStringList> objectsInNamedDb;
-        QMutex objectsInNamedDbMutex;
+        StrHash<QStringList> objectsInNamedDb;
         bool objectLinksEnabled = false;
         QList<DbObject> validDbObjects;
         QWidget* lineNumberArea = nullptr;
@@ -264,8 +265,7 @@ class GUI_API_EXPORT SqlEditor : public QPlainTextEdit, public ExtActionContaine
         bool virtualSqlCompleteSemicolon = false;
         QString createTriggerTable;
         QString loadedFile;
-        QFuture<void> objectsInNamedDbFuture;
-        QFutureWatcher<void>* objectsInNamedDbWatcher = nullptr;
+        QFutureWatcher<QHash<QString,QStringList>>* objectsInNamedDbWatcher = nullptr;
         void changeFontSize(int factor);
 
         static const int autoCompleterDelay = 300;

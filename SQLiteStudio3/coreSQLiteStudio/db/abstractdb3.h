@@ -59,7 +59,7 @@ class AbstractDb3 : public AbstractDb
         void initAfterOpen();
         SqlQueryPtr prepare(const QString& query);
         bool flushWalInternal();
-        QString getTypeLabel();
+        QString getTypeLabel() const;
         bool deregisterFunction(const QString& name, int argCount);
         bool registerScalarFunction(const QString& name, int argCount, bool deterministic);
         bool registerAggregateFunction(const QString& name, int argCount, bool deterministic);
@@ -487,7 +487,7 @@ SqlQueryPtr AbstractDb3<T>::prepare(const QString& query)
 }
 
 template <class T>
-QString AbstractDb3<T>::getTypeLabel()
+QString AbstractDb3<T>::getTypeLabel() const
 {
     return T::label;
 }
@@ -831,7 +831,7 @@ void AbstractDb3<T>::registerDefaultCollation(void* fnUserData, typename T::hand
         return;
     }
 
-    SqlQueryPtr results = db->exec("PRAGMA collation_list");
+    SqlQueryPtr results = db->exec("PRAGMA collation_list", Db::Flag::NO_LOCK|Db::Flag::SKIP_DROP_DETECTION);
     if (results->isError())
         qWarning() << "Unable to query existing collations while registering needed collation" << collationName << ":" << db->getErrorText();
 

@@ -74,12 +74,12 @@ Möchten Sie eine andere auswählen, oder lassen Sie es unkonfiguriert?</transla
   <context>
     <name>DbAndroidInstance</name>
     <message>
-      <location filename="../dbandroidinstance.cpp" line="106"/>
+      <location filename="../dbandroidinstance.cpp" line="113"/>
       <source>Android SQLite driver does not support loadable extensions.</source>
       <translation>Der Android SQLite-Treiber unterstützt keine ladbaren Erweiterungen.</translation>
     </message>
     <message>
-      <location filename="../dbandroidinstance.cpp" line="188"/>
+      <location filename="../dbandroidinstance.cpp" line="206"/>
       <source>Connection with Android database &apos;%1&apos; lost.</source>
       <translation>Verbindung mit der Android-Datenbank &apos;%1&apos; verloren.</translation>
     </message>
@@ -88,8 +88,8 @@ Möchten Sie eine andere auswählen, oder lassen Sie es unkonfiguriert?</transla
     <name>DbAndroidJsonConnection</name>
     <message>
       <location filename="../dbandroidjsonconnection.cpp" line="175"/>
-      <source>Cannot connect to device %1, because it&apos;s not visible to your computer.</source>
-      <translation>Verbindung zu Gerät %1 nicht möglich, da es für Ihren Computer nicht sichtbar ist.</translation>
+      <source>Cannot connect to device %1, because it&apos;s not visible from your computer.</source>
+      <translation type="unfinished">Cannot connect to device %1, because it&apos;s not visible from your computer.</translation>
     </message>
     <message>
       <location filename="../dbandroidjsonconnection.cpp" line="182"/>
@@ -301,8 +301,8 @@ Android-Gerät hat das Löschen verweigert, oder es war unmöglich.</translation
     <name>DbAndroidShellConnection</name>
     <message>
       <location filename="../dbandroidshellconnection.cpp" line="31"/>
-      <source>Cannot connect to device %1, because it&apos;s not visible to your computer.</source>
-      <translation>Verbindung zu Gerät %1 nicht möglich, da es für Ihren Computer nicht sichtbar ist.</translation>
+      <source>Cannot connect to device %1, because it&apos;s not visible from your computer.</source>
+      <translation type="unfinished">Cannot connect to device %1, because it&apos;s not visible from your computer.</translation>
     </message>
     <message>
       <location filename="../dbandroidshellconnection.cpp" line="46"/>
